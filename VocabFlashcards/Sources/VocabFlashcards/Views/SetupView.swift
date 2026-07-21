@@ -252,22 +252,30 @@ struct PracticeSetCardView: View {
         uniqueCount == 0 ? 0 : Double(knownCount) / Double(uniqueCount)
     }
 
+    /// Up to three pills have to share a card that can be as narrow as 240pt, so the two
+    /// count pills carry their icon instead of a word. Only the set size keeps its label —
+    /// the seal and hourglass already say "known" and "almost", and the tooltips spell
+    /// both out.
     @ViewBuilder
     private var cardStats: some View {
         HStack(spacing: 8) {
             statPill(icon: "book.closed.fill",
                      text: "\(uniqueCount) \(uniqueCount == 1 ? "word" : "words")",
-                     tint: Palette.indigo, deep: Palette.indigoDeep)
+                     tint: Palette.indigo, deep: Palette.indigoDeep,
+                     label: "\(uniqueCount) unique words")
             if isMastered {
                 statPill(icon: "checkmark.seal.fill", text: "Mastered",
-                         tint: Palette.success, deep: Palette.successDeep)
+                         tint: Palette.success, deep: Palette.successDeep,
+                         label: "Every word in this set is known")
             } else if knownCount > 0 {
-                statPill(icon: "checkmark.seal.fill", text: "\(knownCount) known",
-                         tint: Palette.success, deep: Palette.successDeep)
+                statPill(icon: "checkmark.seal.fill", text: "\(knownCount)",
+                         tint: Palette.success, deep: Palette.successDeep,
+                         label: "\(knownCount) marked known")
             }
             if asideCount > 0 {
-                statPill(icon: "hourglass", text: "\(asideCount) almost",
-                         tint: Palette.learning, deep: Palette.learningDeep)
+                statPill(icon: "hourglass", text: "\(asideCount)",
+                         tint: Palette.learning, deep: Palette.learningDeep,
+                         label: "\(asideCount) set aside as almost known")
             }
         }
     }
@@ -285,14 +293,21 @@ struct PracticeSetCardView: View {
         }
     }
 
-    private func statPill(icon: String, text: String, tint: Color, deep: Color) -> some View {
+    private func statPill(icon: String, text: String, tint: Color, deep: Color,
+                          label: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 10, weight: .bold))
-            Text(text).font(.rounded(12, .semibold))
+            Text(text)
+                .font(.rounded(12, .semibold))
+                .lineLimit(1)                             // never stack letters vertically
+                .fixedSize(horizontal: true, vertical: false)
         }
         .foregroundStyle(scheme == .dark ? tint : deep)   // lighter on dark, deeper on light
         .padding(.vertical, 5)
         .padding(.horizontal, 10)
         .background(Capsule().fill(tint.opacity(scheme == .dark ? 0.20 : 0.12)))
+        .help(label)
+        .accessibilityElement()
+        .accessibilityLabel(label)
     }
 }

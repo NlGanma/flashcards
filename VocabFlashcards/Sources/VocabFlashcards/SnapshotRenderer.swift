@@ -59,6 +59,25 @@ enum SnapshotRenderer {
             .padding(24)
             save(cards.environmentObject(app), size: CGSize(width: 900, height: 200),
                  name: "22_set_cards", dir: dir)
+
+            // Three pills on the narrowest card the adaptive grid can produce (240pt),
+            // plus a mid-width one — the layout that used to wrap letter-by-letter.
+            for (width, name) in [(240.0, "26_pills_min"), (261.0, "27_pills_typical")] {
+                let crowded = HStack(spacing: 16) {
+                    PracticeSetCardView(set: sets[0], isSelected: true,
+                                        knownCount: 35, asideCount: 1)
+                    PracticeSetCardView(set: sets[1], isSelected: false,
+                                        knownCount: 4, asideCount: 12)
+                }
+                .frame(width: CGFloat(width) * 2 + 16)
+                .padding(20)
+                save(crowded.environmentObject(app),
+                     size: CGSize(width: CGFloat(width) * 2 + 56, height: 190),
+                     name: name, dir: dir)
+                save(crowded.environmentObject(app),
+                     size: CGSize(width: CGFloat(width) * 2 + 56, height: 190),
+                     name: "\(name)_dark", dir: dir, dark: true)
+            }
         }
 
         // A multi-sense card back rendered directly.
