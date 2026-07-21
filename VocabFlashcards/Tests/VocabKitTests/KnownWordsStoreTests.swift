@@ -163,6 +163,132 @@ final class KnownWordsStoreTests: XCTestCase {
         XCTAssertEqual(store.knownKeys, ["keen", "calm"])
     }
 
+    // MARK: - Almost Known bank
+
+    /// The guarantee that matters most: a store file written before the bank existed must
+    /// still load every known word it contains.
+    func testExistingFileWithoutAsideKeyKeepsEveryKnownWord() throws {
+        let existingJSON = #"{"v":2,"w":{"abate":"","candid":"Candid","keen":""}}"#
+        try Data(existingJSON.utf8).write(to: persistedFileURL)
+
+        let store = KnownWordsStore(directory: tempDir)
+
+        XCTAssertEqual(store.count, 3)
+        XCTAssertEqual(store.entries, ["abate": "abate", "candid": "Candid", "keen": "keen"])
+        XCTAssertEqual(store.asideCount, 0)
+    }
+
+    /// An untouched bank must not change a single byte of the file's shape, so builds that
+    /// predate the feature keep reading it exactly as before.
+    func testFileShapeIsUnchangedWhileBankIsEmpty() throws {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(word: "Keen")
+
+        let compact = try compactJSONObject()
+        XCTAssertEqual(Set(compact.keys), ["v", "w"])
+        XCTAssertEqual(compact["v"] as? Int, 2)
+        XCTAssertNil(compact["a"])
+    }
+
+    func testAsideBankRoundTripsAcrossInstances() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markAside(word: "Abscond")
+        store.markAside(word: "alacrity")
+        store.flush()
+
+        let reloaded = KnownWordsStore(directory: tempDir)
+        XCTAssertEqual(reloaded.asideKeys, ["abscond", "alacrity"])
+        XCTAssertEqual(reloaded.asideEntries["abscond"], "Abscond")
+        XCTAssertEqual(reloaded.asideEntries["alacrity"], "alacrity")
+        XCTAssertEqual(reloaded.count, 0)
+        XCTAssertTrue(reloaded.isAside("abscond"))
+    }
+
+    func testMarkingAKnownWordAsideIsRefused() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(word: "keen")
+
+        store.markAside(word: "Keen")
+
+        XCTAssertTrue(store.isKnown("keen"))
+        XCTAssertFalse(store.isAside("keen"))
+        XCTAssertEqual(store.asideCount, 0)
+    }
+
+    func testMarkingKnownPromotesAWordOutOfTheBank() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markAside(word: "keen")
+
+        store.markKnown(key: "keen", display: "keen")
+        store.flush()
+
+        XCTAssertTrue(store.isKnown("keen"))
+        XCTAssertFalse(store.isAside("keen"))
+        let reloaded = KnownWordsStore(directory: tempDir)
+        XCTAssertTrue(reloaded.isKnown("keen"))
+        XCTAssertEqual(reloaded.asideCount, 0)
+    }
+
+    func testClearingOneBankLeavesTheOtherIntact() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(word: "keen")
+        store.markAside(word: "abscond")
+
+        store.removeAllAside()
+        XCTAssertEqual(store.asideCount, 0)
+        XCTAssertEqual(store.count, 1)
+
+        store.markAside(word: "abscond")
+        store.removeAll()
+        XCTAssertEqual(store.count, 0)
+        XCTAssertEqual(store.asideCount, 1)
+    }
+
+    func testRemoveAsideSendsOneWordBackToNew() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markAside(word: "abscond")
+        store.markAside(word: "alacrity")
+
+        store.removeAside(key: "abscond")
+        store.flush()
+
+        XCTAssertEqual(KnownWordsStore(directory: tempDir).asideKeys, ["alacrity"])
+    }
+
+    func testSortedAsideEntries() {
+        let store = KnownWordsStore(directory: tempDir)
+        ["zebra", "apple", "Mango"].forEach { store.markAside(word: $0) }
+        XCTAssertEqual(store.sortedAsideEntries.map(\.display), ["apple", "Mango", "zebra"])
+    }
+
+    /// A word can never be in both banks, even if the file on disk claims otherwise.
+    func testHandEditedFileCannotPutAWordInBothBanks() throws {
+        let conflictingJSON = #"{"v":2,"w":{"keen":""},"a":{"keen":"","abscond":""}}"#
+        try Data(conflictingJSON.utf8).write(to: persistedFileURL)
+
+        let store = KnownWordsStore(directory: tempDir)
+
+        XCTAssertTrue(store.isKnown("keen"))
+        XCTAssertFalse(store.isAside("keen"))
+        XCTAssertEqual(store.asideKeys, ["abscond"])
+    }
+
+    func testFirstLaunchBacksUpAnExistingStoreOnce() throws {
+        let originalJSON = #"{"v":2,"w":{"abate":""}}"#
+        try Data(originalJSON.utf8).write(to: persistedFileURL)
+
+        _ = KnownWordsStore(directory: tempDir)
+        let backupURL = tempDir.appendingPathComponent("known_words.backup.json")
+        XCTAssertEqual(try String(contentsOf: backupURL), originalJSON)
+
+        // A later launch must not overwrite the original snapshot.
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(word: "keen")
+        store.flush()
+        _ = KnownWordsStore(directory: tempDir)
+        XCTAssertEqual(try String(contentsOf: backupURL), originalJSON)
+    }
+
     private var persistedFileURL: URL {
         tempDir.appendingPathComponent("known_words.json")
     }

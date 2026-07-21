@@ -59,6 +59,28 @@ final class DeckBuilderTests: XCTestCase {
         XCTAssertTrue(deck.isEmpty)
     }
 
+    func testExcludeKnownAlsoSkipsAlmostKnownWords() {
+        let sets = [set("A", [("keen", "adj.", "敏锐的"), ("calm", "adj.", "平静的"),
+                              ("abate", "v.", "减轻")])]
+        let deck = builder.buildOrdered(from: sets, filter: .excludeKnown,
+                                        knownKeys: ["keen"], asideKeys: ["calm"])
+        XCTAssertEqual(deck.map(\.key), ["abate"])
+    }
+
+    func testIncludeKnownStillContainsAlmostKnownWords() {
+        let sets = [set("A", [("keen", "adj.", "敏锐的"), ("calm", "adj.", "平静的")])]
+        let deck = builder.buildOrdered(from: sets, filter: .includeKnown,
+                                        knownKeys: [], asideKeys: ["calm"])
+        XCTAssertEqual(Set(deck.map(\.key)), ["keen", "calm"])
+    }
+
+    func testOnlyKnownIgnoresAlmostKnownWords() {
+        let sets = [set("A", [("keen", "adj.", "敏锐的"), ("calm", "adj.", "平静的")])]
+        let deck = builder.buildOrdered(from: sets, filter: .onlyKnown,
+                                        knownKeys: ["keen"], asideKeys: ["calm"])
+        XCTAssertEqual(deck.map(\.key), ["keen"])
+    }
+
     func testShuffledBuildKeepsSameContents() {
         let sets = [set("A", (0..<50).map { ("word\($0)", "n.", "def\($0)") })]
         let ordered = builder.buildOrdered(from: sets, filter: .includeKnown, knownKeys: [])

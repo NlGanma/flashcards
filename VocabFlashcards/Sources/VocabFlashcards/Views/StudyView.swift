@@ -3,7 +3,7 @@ import AppKit
 import VocabKit
 
 enum StudyControlFocus: Hashable {
-    case sets, knownAction, previous, next
+    case sets, knownAction, asideAction, previous, next
 }
 
 struct StudyView: View {
@@ -49,7 +49,10 @@ private struct StudyContent: View {
         .onDisappear(perform: removeKeyMonitor)
         .onChange(of: session.currentIndex) { _ in focusedControl = nil }
         .onChange(of: session.isShowingBack) { showingBack in
-            if !showingBack && focusedControl == .knownAction { focusedControl = nil }
+            // The card actions only exist on the back — don't leave focus stranded there.
+            if !showingBack, focusedControl == .knownAction || focusedControl == .asideAction {
+                focusedControl = nil
+            }
         }
     }
 
@@ -74,7 +77,14 @@ private struct StudyContent: View {
 
                 Spacer()
 
-                badge(icon: "checkmark.seal.fill", text: "\(session.knownCount) known", tint: Palette.success)
+                HStack(spacing: 8) {
+                    if session.asideCount > 0 {
+                        badge(icon: "hourglass", text: "\(session.asideCount) almost",
+                              tint: Palette.learning)
+                    }
+                    badge(icon: "checkmark.seal.fill", text: "\(session.knownCount) known",
+                          tint: Palette.success)
+                }
             }
 
             ProgressBar(fraction: session.progressFraction, height: 8)
@@ -117,10 +127,14 @@ private struct StudyContent: View {
                     card: card,
                     isShowingBack: session.isShowingBack,
                     isKnownFlash: app.lastMarkedKnownID == card.key,
+                    isAsideFlash: app.lastMarkedAsideID == card.key,
                     isCurrentKnown: session.isCurrentKnown,
+                    isCurrentAside: session.isCurrentAside,
                     onFlip: app.flip,
                     onMarkKnown: app.markKnownAndAdvance,
                     onUnmarkKnown: app.unmarkCurrentKnown,
+                    onMarkAside: app.markAsideAndAdvance,
+                    onUnmarkAside: app.unmarkCurrentAside,
                     actionFocus: $focusedControl
                 )
                 .id(card.key)
@@ -235,6 +249,7 @@ private struct StudyContent: View {
         }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "k": app.toggleCurrentKnown(); return true
+        case "a": app.toggleCurrentAside(); return true
         case "f": app.flip(); return true
         default: return false
         }

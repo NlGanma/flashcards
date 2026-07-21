@@ -108,10 +108,65 @@ enum SnapshotRenderer {
         save(focusedKnownBack, size: CGSize(width: 649, height: 476),
              name: "45_known_card_dark", dir: dir, dark: true)
 
+        // Card footer in each bank state — the two mark actions must fit side by side.
+        let footerCard = Flashcard(id: "capricious", word: "capricious",
+                                   senses: [Sense(partOfSpeech: "adj.", definition: "反复无常的，任性的")],
+                                   sourceSets: ["Practice 1"])
+        for (mode, isKnown, isAside) in [("new", false, false),
+                                         ("almost", false, true),
+                                         ("known", true, false)] {
+            for dark in [false, true] {
+                let view = ZStack {
+                    AppBackground()
+                    FlashcardView(card: footerCard, isShowingBack: true, isKnownFlash: false,
+                                  isCurrentKnown: isKnown, isCurrentAside: isAside)
+                        .padding(40)
+                }
+                save(view, size: CGSize(width: Metric.cardMaxWidth + 80, height: Metric.cardHeight + 80),
+                     name: "47_card_\(mode)\(dark ? "_dark" : "")", dir: dir, dark: dark)
+            }
+        }
+
+        // The "just parked" flourish.
+        save(ZStack {
+                AppBackground()
+                FlashcardView(card: footerCard, isShowingBack: false, isKnownFlash: false,
+                              isAsideFlash: true)
+                    .padding(40)
+             },
+             size: CGSize(width: Metric.cardMaxWidth + 80, height: Metric.cardHeight + 80),
+             name: "48_aside_flash_dark", dir: dir, dark: true)
+
         app.errorMessage = "That file couldn't be read. Your current round is still here."
         save(RootView().environmentObject(app), size: full,
              name: "46_study_error_dark", dir: dir, dark: true)
         app.errorMessage = nil
+
+        // Study header with both bank badges, and the setup screen once words are parked.
+        let banked = makeApp(known: known)
+        banked.loadFile(at: sampleURL, remember: false)
+        let parkedWords = banked.selectedSets.flatMap { $0.items.map(\.english) }
+            .filter { !known.isKnown(word: $0) }
+            .prefix(9)
+        parkedWords.forEach { known.markAside(word: $0) }
+        save(RootView().environmentObject(banked), size: full, name: "24_setup_with_bank", dir: dir)
+        save(RootView().environmentObject(banked), size: full, name: "25_setup_with_bank_dark",
+             dir: dir, dark: true)
+        banked.startStudy(filter: .includeKnown)
+        banked.session?.showBack()
+        save(RootView().environmentObject(banked), size: CGSize(width: 880, height: 640),
+             name: "49_study_min_width_dark", dir: dir, dark: true)
+        save(RootView().environmentObject(banked), size: CGSize(width: 880, height: 640),
+             name: "49b_study_min_width", dir: dir)
+
+        // A summary with its session still attached, so the bulk set-aside action shows.
+        banked.markKnownAndAdvance()
+        banked.advance()
+        banked.advance()
+        banked.finishRound()
+        save(RootView().environmentObject(banked), size: full, name: "53_summary_live", dir: dir)
+        save(RootView().environmentObject(banked), size: full, name: "54_summary_live_dark",
+             dir: dir, dark: true)
 
         // Summary.
         app.route = .summary
@@ -119,9 +174,27 @@ enum SnapshotRenderer {
         app.lastSummary = RoundSummary(roundNumber: 1, totalStudied: 24, markedKnown: 17, stillUnknown: 7)
         save(RootView().environmentObject(app), size: full, name: "50_summary", dir: dir)
 
-        // Known words manager.
+        // Summary including the Almost tile.
+        app.lastSummary = RoundSummary(roundNumber: 2, totalStudied: 24, markedKnown: 13,
+                                       stillUnknown: 5, unvisited: 0, setAside: 6)
+        save(RootView().environmentObject(app), size: full, name: "51_summary_with_almost", dir: dir)
+        save(RootView().environmentObject(app), size: full, name: "52_summary_with_almost_dark",
+             dir: dir, dark: true)
+
+        // Word manager — both banks.
         save(KnownWordsView(store: known).environmentObject(app),
              size: CGSize(width: 460, height: 560), name: "60_known_words", dir: dir)
+        let asideApp = makeApp(known: known)
+        asideApp.knownWordsTab = .aside
+        save(KnownWordsView(store: known).environmentObject(asideApp),
+             size: CGSize(width: 460, height: 560), name: "61_almost_known", dir: dir)
+        save(KnownWordsView(store: known).environmentObject(asideApp),
+             size: CGSize(width: 460, height: 560), name: "62_almost_known_dark", dir: dir, dark: true)
+        let emptyBankApp = makeApp(known: KnownWordsStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent("vf-snap-\(UUID().uuidString)")))
+        emptyBankApp.knownWordsTab = .aside
+        save(KnownWordsView(store: emptyBankApp.knownStore).environmentObject(emptyBankApp),
+             size: CGSize(width: 460, height: 560), name: "63_almost_known_empty", dir: dir)
     }
 
     private static func makeApp(known: KnownWordsStore) -> AppState {

@@ -39,6 +39,39 @@ struct SoftButtonStyle: ButtonStyle {
     }
 }
 
+/// Shared style for every "Almost Known" action. Slate is desaturated, so a plain soft
+/// fill reads as disabled next to the green and indigo buttons — an outline gives the off
+/// state presence without competing with the primary action. The on state fills in, and
+/// both states are the same size, so toggling never reflows the row.
+struct AlmostButtonStyle: ButtonStyle {
+    var isOn: Bool = false
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let off = Palette.learningTint(scheme)
+        return configuration.label
+            .font(.rounded(15, .semibold))
+            .foregroundStyle(isOn ? AnyShapeStyle(Color.white) : AnyShapeStyle(off))
+            .padding(.vertical, 12)
+            .padding(.horizontal, 20)
+            .background(
+                Capsule().fill(isOn
+                               ? AnyShapeStyle(Palette.learningGradient)
+                               : AnyShapeStyle(off.opacity(scheme == .dark ? 0.22 : 0.14)))
+            )
+            .overlay(
+                Capsule().strokeBorder(off.opacity(isOn ? 0 : (scheme == .dark ? 0.35 : 0.28)),
+                                       lineWidth: 1)
+            )
+            .shadow(color: Palette.learning.opacity(isOn ? (configuration.isPressed ? 0.15 : 0.35) : 0),
+                    radius: configuration.isPressed ? 5 : 12, y: 6)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(Motion.quick, value: configuration.isPressed)
+            .animation(Motion.quick, value: isOn)
+            .contentShape(Capsule())
+    }
+}
+
 /// Minimal text/icon button.
 struct GhostButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var scheme

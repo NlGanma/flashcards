@@ -23,8 +23,10 @@ struct VocabFlashcardsApp: App {
                     .keyboardShortcut("o", modifiers: .command)
             }
             CommandGroup(after: .sidebar) {
-                Button("Known Words…") { app.showingKnownWords = true }
+                Button("Known Words…") { app.showWordManager(.known) }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
+                Button("Almost Known…") { app.showWordManager(.aside) }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
                 Divider()
             }
         }

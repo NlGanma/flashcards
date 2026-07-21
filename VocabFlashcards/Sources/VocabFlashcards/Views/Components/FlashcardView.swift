@@ -40,14 +40,25 @@ struct FlashcardView: View {
     let card: Flashcard
     var isShowingBack: Bool
     var isKnownFlash: Bool
+    var isAsideFlash: Bool = false
     var isCurrentKnown: Bool = false
+    var isCurrentAside: Bool = false
     var onFlip: () -> Void = {}
     var onMarkKnown: () -> Void = {}
     var onUnmarkKnown: () -> Void = {}
+    var onMarkAside: () -> Void = {}
+    var onUnmarkAside: () -> Void = {}
     var actionFocus: FocusState<StudyControlFocus?>.Binding? = nil
     @Environment(\.colorScheme) private var scheme
 
     private var angle: Double { isShowingBack ? 180 : 0 }
+
+    /// Which mark just happened, if any — drives the border glow and badge.
+    private var flashTint: Color? {
+        if isKnownFlash { return Palette.success }
+        if isAsideFlash { return Palette.learning }
+        return nil
+    }
 
     var body: some View {
         front
@@ -55,27 +66,34 @@ struct FlashcardView: View {
             .frame(maxWidth: Metric.cardMaxWidth)
             .frame(height: Metric.cardHeight)
             .overlay {                                   // celebratory border glow
-                if isKnownFlash {
+                if let flashTint {
                     RoundedRectangle(cornerRadius: Metric.cardCorner, style: .continuous)
-                        .strokeBorder(Palette.success, lineWidth: 3)
-                        .shadow(color: Palette.success.opacity(0.5), radius: 16)
+                        .strokeBorder(flashTint, lineWidth: 3)
+                        .shadow(color: flashTint.opacity(0.5), radius: 16)
                         .transition(.opacity)
                 }
             }
-            .overlay {                                   // springy check-badge pop
+            .overlay {                                   // springy badge pop
                 if isKnownFlash {
-                    knownBadge.transition(.scale(scale: 0.3).combined(with: .opacity))
+                    markBadge(icon: "checkmark", gradient: Palette.successGradient,
+                              glow: Palette.success)
+                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                } else if isAsideFlash {
+                    markBadge(icon: "hourglass", gradient: Palette.learningGradient,
+                              glow: Palette.learning)
+                        .transition(.scale(scale: 0.3).combined(with: .opacity))
                 }
             }
             .animation(Motion.pop, value: isKnownFlash)
+            .animation(Motion.pop, value: isAsideFlash)
     }
 
-    private var knownBadge: some View {
+    private func markBadge(icon: String, gradient: LinearGradient, glow: Color) -> some View {
         ZStack {
-            Circle().fill(Palette.successGradient)
+            Circle().fill(gradient)
                 .frame(width: 78, height: 78)
-                .shadow(color: Palette.success.opacity(0.5), radius: 16)
-            Image(systemName: "checkmark")
+                .shadow(color: glow.opacity(0.5), radius: 16)
+            Image(systemName: icon)
                 .font(.system(size: 36, weight: .bold))
                 .foregroundStyle(.white)
         }
@@ -151,15 +169,15 @@ struct FlashcardView: View {
         }
     }
 
+    /// Two ways to file a word: the green action commits it to the permanent known list,
+    /// the slate one parks it in the temporary Almost Known bank. A word that is already
+    /// known shows only the known action — parking it would demote real progress.
     private var knownActionFooter: some View {
         HStack(spacing: 10) {
             if isCurrentKnown {
-                focusedKnownAction(
+                focusedAction(.knownAction,
                     Button(action: onUnmarkKnown) {
-                        Label("Mark Unknown & Continue", systemImage: "arrow.uturn.backward.circle.fill")
-                            .font(.rounded(15, .bold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 2)
+                        actionLabel("Mark Unknown & Continue", icon: "arrow.uturn.backward.circle.fill")
                     }
                     .buttonStyle(FilledButtonStyle(gradient: Palette.learningGradient, glow: Palette.learning))
                     .help("Move this word back to still learning and continue (K)")
@@ -167,12 +185,9 @@ struct FlashcardView: View {
                     .hoverLift(scale: 1.03)
                 )
             } else {
-                focusedKnownAction(
+                focusedAction(.knownAction,
                     Button(action: onMarkKnown) {
-                        Label("Mark Known & Continue", systemImage: "checkmark.circle.fill")
-                            .font(.rounded(15, .bold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 2)
+                        actionLabel("Mark Known & Continue", icon: "checkmark.circle.fill")
                     }
                     .buttonStyle(FilledButtonStyle(gradient: Palette.successGradient, glow: Palette.success))
                     .help("Mark known and continue (K)")
@@ -181,19 +196,28 @@ struct FlashcardView: View {
                 )
             }
 
-            Text("K")
-                .font(.rounded(11, .bold))
-                .foregroundStyle(Color.secondaryText(scheme))
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+            keyCap("K")
+
+            if !isCurrentKnown {
+                // A toggle chip rather than a second swapping label: it keeps one width in
+                // both states, so the primary action never has to shrink or truncate.
+                focusedAction(.asideAction,
+                    Button(action: isCurrentAside ? onUnmarkAside : onMarkAside) {
+                        actionLabel("Almost", icon: "hourglass")
+                    }
+                    .buttonStyle(AlmostButtonStyle(isOn: isCurrentAside))
+                    .help(isCurrentAside
+                          ? "In Almost Known — press A to send it back to the new pile"
+                          : "Almost know it — park this word out of the new pile without marking it known (A)")
+                    .accessibilityLabel(isCurrentAside
+                                        ? "Move \(card.word) out of Almost Known and continue"
+                                        : "Set \(card.word) aside as almost known and continue")
+                    .accessibilityAddTraits(isCurrentAside ? [.isSelected] : [])
+                    .hoverLift(scale: 1.03)
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(scheme == .dark ? 0.14 : 0.09), lineWidth: 1)
-                )
-                .accessibilityHidden(true)
+
+                keyCap("A")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 26)
@@ -205,10 +229,34 @@ struct FlashcardView: View {
         }
     }
 
+    private func actionLabel(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(.rounded(15, .bold))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 2)
+    }
+
+    private func keyCap(_ key: String) -> some View {
+        Text(key)
+            .font(.rounded(11, .bold))
+            .foregroundStyle(Color.secondaryText(scheme))
+            .frame(width: 24, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(scheme == .dark ? 0.14 : 0.09), lineWidth: 1)
+            )
+            .accessibilityHidden(true)
+    }
+
     @ViewBuilder
-    private func focusedKnownAction<Content: View>(_ content: Content) -> some View {
+    private func focusedAction<Content: View>(_ control: StudyControlFocus, _ content: Content) -> some View {
         if let actionFocus {
-            content.focused(actionFocus, equals: .knownAction)
+            content.focused(actionFocus, equals: control)
         } else {
             content
         }

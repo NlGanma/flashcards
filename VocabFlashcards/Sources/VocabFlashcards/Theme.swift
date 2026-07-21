@@ -10,10 +10,17 @@ enum Palette {
     static let indigoDeep = Color(red: 0.28, green: 0.30, blue: 0.72)
     static let success = Color(red: 0.16, green: 0.72, blue: 0.52)
     static let successDeep = Color(red: 0.09, green: 0.60, blue: 0.44)
-    /// Neutral slate-violet for "still learning" / un-mark — amber is reserved for warnings.
+    /// Neutral slate-violet for "still learning" / un-mark / Almost Known — amber is
+    /// reserved for warnings.
     static let learning = Color(red: 0.52, green: 0.53, blue: 0.68)
     static let learningDeep = Color(red: 0.40, green: 0.41, blue: 0.56)
     static let amber = Color(red: 0.98, green: 0.63, blue: 0.31)
+
+    /// Slate is too pale to carry text on a light background — use the deeper variant
+    /// there so a slate control never reads as disabled next to the green/indigo ones.
+    static func learningTint(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? learning : learningDeep
+    }
 
     static let accentGradient = LinearGradient(
         colors: [indigo, violet],

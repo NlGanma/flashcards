@@ -37,7 +37,8 @@ struct SetupView: View {
                                 PracticeSetCardView(
                                     set: set,
                                     isSelected: app.selectedSetIDs.contains(set.id),
-                                    knownCount: knownCount(in: set)
+                                    knownCount: knownCount(in: set),
+                                    asideCount: asideCount(in: set)
                                 )
                                 .onTapGesture {
                                     withAnimation(Motion.spring) { app.toggleSet(set.id) }
@@ -66,8 +67,17 @@ struct SetupView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if app.knownStore.asideCount > 0 {
+                Button {
+                    app.showWordManager(.aside)
+                } label: {
+                    Label("\(app.knownStore.asideCount) Almost", systemImage: "hourglass")
+                }
+                .buttonStyle(SoftButtonStyle(tint: Palette.learningTint(scheme)))
+                .help("Words parked out of the new pile — revert them any time (⌘⇧A)")
+            }
             Button {
-                app.showingKnownWords = true
+                app.showWordManager(.known)
             } label: {
                 Label("\(app.knownStore.count) Known", systemImage: "checkmark.seal.fill")
             }
@@ -182,6 +192,11 @@ struct SetupView: View {
         let keys = Set(set.items.map(\.key))
         return keys.filter { app.knownStore.isKnown($0) }.count
     }
+
+    private func asideCount(in set: PracticeSet) -> Int {
+        let keys = Set(set.items.map(\.key))
+        return keys.filter { app.knownStore.isAside($0) }.count
+    }
 }
 
 /// A selectable card representing one practice set.
@@ -189,6 +204,7 @@ struct PracticeSetCardView: View {
     let set: PracticeSet
     let isSelected: Bool
     let knownCount: Int
+    var asideCount: Int = 0
     @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
 
@@ -248,6 +264,10 @@ struct PracticeSetCardView: View {
             } else if knownCount > 0 {
                 statPill(icon: "checkmark.seal.fill", text: "\(knownCount) known",
                          tint: Palette.success, deep: Palette.successDeep)
+            }
+            if asideCount > 0 {
+                statPill(icon: "hourglass", text: "\(asideCount) almost",
+                         tint: Palette.learning, deep: Palette.learningDeep)
             }
         }
     }

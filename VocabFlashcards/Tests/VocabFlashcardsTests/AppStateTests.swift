@@ -208,6 +208,112 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(fixture.app.route, .study)
     }
 
+    // MARK: - Almost Known bank
+
+    @MainActor
+    func testSettingAWordAsidePersistsItAndAdvances() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta"], knownWords: [])
+        defer { fixture.cleanup() }
+
+        fixture.app.startStudy(filter: .excludeKnown)
+        let firstKey = try XCTUnwrap(fixture.app.session?.currentCard?.key)
+        fixture.app.markAsideAndAdvance()
+
+        XCTAssertTrue(fixture.store.isAside(firstKey))
+        XCTAssertFalse(fixture.store.isKnown(firstKey))
+        XCTAssertNotEqual(fixture.app.session?.currentCard?.key, firstKey)
+        XCTAssertEqual(fixture.app.route, .study)
+        XCTAssertEqual(fixture.app.lastMarkedAsideID, firstKey)
+    }
+
+    /// The whole point of the bank: parked words stop showing up as new.
+    @MainActor
+    func testParkedWordsLeaveTheNewDeckAndComeBackAfterRevert() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta"], knownWords: [])
+        defer { fixture.cleanup() }
+
+        XCTAssertEqual(fixture.app.deckCount(for: .excludeKnown), 2)
+
+        fixture.app.startStudy(filter: .excludeKnown)
+        fixture.app.markAsideAndAdvance()
+        XCTAssertEqual(fixture.app.deckCount(for: .excludeKnown), 1)
+        XCTAssertEqual(fixture.app.deckCount(for: .includeKnown), 2)
+        XCTAssertEqual(fixture.app.deckCount(for: .onlyKnown), 0)
+
+        fixture.app.revertAllAside()
+
+        XCTAssertEqual(fixture.app.deckCount(for: .excludeKnown), 2)
+        XCTAssertEqual(fixture.store.asideCount, 0)
+    }
+
+    /// Reverting the bank must never touch the permanent known list.
+    @MainActor
+    func testRevertingTheBankLeavesKnownWordsAlone() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta"], knownWords: ["alpha"])
+        defer { fixture.cleanup() }
+
+        fixture.app.startStudy(filter: .excludeKnown)     // just "beta"
+        fixture.app.markAsideAndAdvance()
+        XCTAssertEqual(fixture.store.asideCount, 1)
+
+        fixture.app.revertAllAside()
+
+        XCTAssertEqual(fixture.store.count, 1)
+        XCTAssertTrue(fixture.store.isKnown(word: "alpha"))
+        XCTAssertEqual(fixture.store.asideCount, 0)
+    }
+
+    @MainActor
+    func testAsideShortcutIsIgnoredForKnownWords() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta"], knownWords: ["alpha", "beta"])
+        defer { fixture.cleanup() }
+
+        fixture.app.startStudy(filter: .onlyKnown)
+        let firstKey = try XCTUnwrap(fixture.app.session?.currentCard?.key)
+        fixture.app.toggleCurrentAside()
+
+        XCTAssertTrue(fixture.store.isKnown(firstKey))
+        XCTAssertEqual(fixture.store.asideCount, 0)
+        XCTAssertEqual(fixture.app.session?.currentCard?.key, firstKey)   // no advance
+    }
+
+    @MainActor
+    func testSummaryBulkActionParksEveryStillUnknownWord() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta", "gamma"], knownWords: [])
+        defer { fixture.cleanup() }
+
+        fixture.app.startStudy(filter: .excludeKnown)
+        fixture.app.markKnownAndAdvance()                 // first card known
+        fixture.app.advance()
+        fixture.app.advance()                             // finishes the round
+        XCTAssertEqual(fixture.app.route, .summary)
+        XCTAssertEqual(fixture.app.stillUnknownCards.count, 2)
+
+        fixture.app.setAsideStillUnknown()
+
+        XCTAssertEqual(fixture.store.asideCount, 2)
+        XCTAssertEqual(fixture.store.count, 1)
+        XCTAssertEqual(fixture.app.lastSummary?.setAside, 2)
+        XCTAssertEqual(fixture.app.lastSummary?.stillUnknown, 0)
+        XCTAssertEqual(fixture.app.deckCount(for: .excludeKnown), 0)
+    }
+
+    @MainActor
+    func testManagerRevertOfOneWordSynchronizesTheSession() throws {
+        let fixture = try makeFixture(words: ["alpha", "beta"], knownWords: [])
+        defer { fixture.cleanup() }
+
+        fixture.app.startStudy(filter: .excludeKnown)
+        let firstKey = try XCTUnwrap(fixture.app.session?.currentCard?.key)
+        fixture.app.markAsideAndAdvance()
+
+        fixture.app.unmarkAside(key: firstKey)
+
+        XCTAssertFalse(fixture.store.isAside(firstKey))
+        XCTAssertEqual(fixture.app.session?.asideCount, 0)
+        XCTAssertTrue(fixture.app.session?.remainingCards.map(\.key).contains(firstKey) == true)
+    }
+
     @MainActor
     private func makeFixture(words: [String], knownWords: Set<String>) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory

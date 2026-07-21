@@ -7,14 +7,17 @@ public struct RoundSummary: Sendable, Equatable {
     public let markedKnown: Int
     public let stillUnknown: Int
     public let unvisited: Int
+    /// Studied words parked in the temporary "Almost Known" bank this round.
+    public let setAside: Int
 
     public init(roundNumber: Int, totalStudied: Int, markedKnown: Int, stillUnknown: Int,
-                unvisited: Int = 0) {
+                unvisited: Int = 0, setAside: Int = 0) {
         self.roundNumber = roundNumber
         self.totalStudied = totalStudied
         self.markedKnown = markedKnown
         self.stillUnknown = stillUnknown
         self.unvisited = unvisited
+        self.setAside = setAside
     }
 
     /// Whether there are unknown or not-yet-seen words left to study.
@@ -29,5 +32,6 @@ public struct RoundSummary: Sendable, Equatable {
     }
 
     /// True when every scheduled word was visited and marked known — a clean sweep.
-    public var isPerfect: Bool { totalStudied > 0 && stillUnknown == 0 && unvisited == 0 }
+    /// Parked words don't count: they were set aside, not learned.
+    public var isPerfect: Bool { totalStudied > 0 && markedKnown == totalStudied && unvisited == 0 }
 }

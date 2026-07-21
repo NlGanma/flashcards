@@ -29,12 +29,19 @@ final class AppState: ObservableObject {
 
     // Sheets & transient messages
     @Published var showingKnownWords = false
+    /// Which bank the word manager opens on.
+    @Published var knownWordsTab: WordBank = .known
     @Published var errorMessage: String?
     @Published var infoMessage: String?
     @Published var isLoading = false
 
-    // Subtle feedback flag for "just marked known" flourish.
+    /// The two persistent banks a word can sit in. New words are in neither.
+    enum WordBank: Hashable { case known, aside }
+
+    // Subtle feedback flags for the "just marked" flourish — one per bank so the card
+    // can glow in the matching color.
     @Published var lastMarkedKnownID: String?
+    @Published var lastMarkedAsideID: String?
     private var knownFlashToken = UUID()
 
     // Direction of the last navigation, so cards slide in from the correct side:
@@ -158,21 +165,24 @@ final class AppState: ObservableObject {
     /// the inline mode picker on the setup screen.
     func deckCount(for filter: KnownFilter) -> Int {
         deckBuilder.buildOrdered(from: selectedSets, filter: filter,
-                                 knownKeys: knownStore.knownKeys).count
+                                 knownKeys: knownStore.knownKeys,
+                                 asideKeys: knownStore.asideKeys).count
     }
 
     /// Start a run immediately with the current selection and the chosen filter.
     func startStudy(filter: KnownFilter) {
         pendingFilter = filter
         let deck = deckBuilder.build(from: selectedSets, filter: filter,
-                                     knownKeys: knownStore.knownKeys)
+                                     knownKeys: knownStore.knownKeys,
+                                     asideKeys: knownStore.asideKeys)
         guard !deck.isEmpty else {
             infoMessage = emptyDeckMessage(for: filter)
             return
         }
         let newSession = StudySession(cards: deck, filter: filter,
                                       selectedSetNames: selectedSets.map(\.name), roundNumber: 1,
-                                      initialKnownKeys: knownStore.knownKeys)
+                                      initialKnownKeys: knownStore.knownKeys,
+                                      initialAsideKeys: knownStore.asideKeys)
         infoMessage = nil
         resetKnownFlash()
         withAnimation(Motion.gentleSpring) {
@@ -185,6 +195,9 @@ final class AppState: ObservableObject {
     private func emptyDeckMessage(for filter: KnownFilter) -> String {
         switch filter {
         case .excludeKnown:
+            if knownStore.asideCount > 0 {
+                return "No new words left here. Try “Study Everything”, choose more sets, or revert your \(knownStore.asideCount) Almost Known word\(knownStore.asideCount == 1 ? "" : "s")."
+            }
             return "You've already marked every selected word as known. Try “Study Everything” or choose more sets."
         case .onlyKnown:
             return "None of the selected words are marked known yet. Study them first!"
@@ -205,13 +218,31 @@ final class AppState: ObservableObject {
         session?.markCurrentKnown()
         knownStore.markKnown(key: card.key, display: card.word)
         Haptics.mark()
-        let key = card.key
+        flash(.known, key: card.key)
+    }
+
+    /// Park the current word in the temporary "Almost Known" bank: it leaves the New pool
+    /// but never counts as known, and the whole bank can be reverted in one action.
+    func markCurrentAside() {
+        guard let card = session?.currentCard, !knownStore.isKnown(card.key) else { return }
+        session?.markCurrentAside()
+        knownStore.markAside(key: card.key, display: card.word)
+        Haptics.light()
+        flash(.aside, key: card.key)
+    }
+
+    /// Shared "just marked" flourish. One token drives both banks, so a fresh mark always
+    /// supersedes the previous card's glow.
+    private func flash(_ bank: WordBank, key: String) {
         let token = UUID()
         knownFlashToken = token
-        withAnimation(Motion.pop) { lastMarkedKnownID = key }
+        withAnimation(Motion.pop) {
+            lastMarkedKnownID = bank == .known ? key : nil
+            lastMarkedAsideID = bank == .aside ? key : nil
+        }
         // Auto-clear the celebration flag after it has ridden out with the card.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            if self?.knownFlashToken == token { self?.lastMarkedKnownID = nil }
+            if self?.knownFlashToken == token { self?.resetKnownFlash() }
         }
     }
 
@@ -234,6 +265,35 @@ final class AppState: ObservableObject {
     func clearKnownWords() {
         session?.unmarkAllKnown()
         knownStore.removeAll()
+        resetKnownFlash()
+        refreshSummaryIfNeeded()
+    }
+
+    /// Card-level un-park: back to New, then continue.
+    func unmarkCurrentAside() {
+        guard let card = session?.currentCard else { return }
+        unmarkAside(key: card.key)
+        advance()
+    }
+
+    /// Send one word from the bank back to New.
+    func unmarkAside(key: String) {
+        session?.unmarkAside(key: key)
+        knownStore.removeAside(key: key)
+        if lastMarkedAsideID == key { resetKnownFlash() }
+        refreshSummaryIfNeeded()
+    }
+
+    /// Open the word manager on a specific bank.
+    func showWordManager(_ tab: WordBank) {
+        knownWordsTab = tab
+        showingKnownWords = true
+    }
+
+    /// Empty the bank — every parked word becomes new again. Known words are untouched.
+    func revertAllAside() {
+        session?.unmarkAllAside()
+        knownStore.removeAllAside()
         resetKnownFlash()
         refreshSummaryIfNeeded()
     }
@@ -278,6 +338,11 @@ final class AppState: ObservableObject {
         advance()
     }
 
+    func markAsideAndAdvance() {
+        markCurrentAside()
+        advance()
+    }
+
     /// K key mirrors the visible card action: classify, persist, and continue.
     func toggleCurrentKnown() {
         guard let session else { return }
@@ -285,6 +350,17 @@ final class AppState: ObservableObject {
             unmarkCurrentKnown()
         } else {
             markKnownAndAdvance()
+        }
+    }
+
+    /// A key mirrors the card's Almost action. Known words are left alone — the bank is
+    /// for words still being learned.
+    func toggleCurrentAside() {
+        guard let session, !session.isCurrentKnown else { return }
+        if session.isCurrentAside {
+            unmarkCurrentAside()
+        } else {
+            markAsideAndAdvance()
         }
     }
 
@@ -312,7 +388,8 @@ final class AppState: ObservableObject {
         let next = StudySession(cards: nextCards, filter: session.filter,
                                 selectedSetNames: session.selectedSetNames,
                                 roundNumber: session.roundNumber + 1,
-                                initialKnownKeys: knownStore.knownKeys)
+                                initialKnownKeys: knownStore.knownKeys,
+                                initialAsideKeys: knownStore.asideKeys)
         resetKnownFlash()
         withAnimation(Motion.gentleSpring) {
             self.session = next
@@ -322,6 +399,20 @@ final class AppState: ObservableObject {
     }
 
     var summaryHasRemaining: Bool { lastSummary?.hasRemaining ?? false }
+
+    /// Words seen this round that were neither known nor already parked. Offered on the
+    /// summary as a one-tap way to clear them out of the New pool for a while.
+    var stillUnknownCards: [Flashcard] { session?.stillUnknownCards ?? [] }
+
+    func setAsideStillUnknown() {
+        guard let session else { return }
+        for card in session.stillUnknownCards {
+            session.markAside(key: card.key)
+            knownStore.markAside(key: card.key, display: card.word)
+        }
+        Haptics.mark()
+        refreshSummaryIfNeeded()
+    }
 
     func backToSetup() {
         resetKnownFlash()
@@ -359,5 +450,6 @@ final class AppState: ObservableObject {
     private func resetKnownFlash() {
         knownFlashToken = UUID()
         lastMarkedKnownID = nil
+        lastMarkedAsideID = nil
     }
 }

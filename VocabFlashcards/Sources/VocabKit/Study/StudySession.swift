@@ -18,18 +18,22 @@ public final class StudySession: ObservableObject {
     /// Current known/unknown state for cards in this deck. Seeded from the global store
     /// so Review Known and Study Everything start from the state the UI displays.
     @Published public private(set) var knownKeys: Set<String>
+    /// Cards parked in the temporary "Almost Known" bank during (or before) this round.
+    @Published public private(set) var asideKeys: Set<String>
     /// Distinct cards that have appeared during this round. This keeps an early Finish
     /// from reporting the entire deck as studied, including after back navigation.
     public private(set) var visitedKeys: Set<String>
 
     public init(cards: [Flashcard], filter: KnownFilter, selectedSetNames: [String],
-                roundNumber: Int = 1, initialKnownKeys: Set<String> = []) {
+                roundNumber: Int = 1, initialKnownKeys: Set<String> = [],
+                initialAsideKeys: Set<String> = []) {
         self.cards = cards
         self.filter = filter
         self.selectedSetNames = selectedSetNames
         self.roundNumber = roundNumber
         let deckKeys = Set(cards.map(\.key))
         self.knownKeys = initialKnownKeys.intersection(deckKeys)
+        self.asideKeys = initialAsideKeys.intersection(deckKeys).subtracting(initialKnownKeys)
         self.visitedKeys = Set(cards.prefix(1).map(\.key))
     }
 
@@ -51,6 +55,8 @@ public final class StudySession: ObservableObject {
 
     public var knownCount: Int { knownKeys.count }
 
+    public var asideCount: Int { asideKeys.count }
+
     /// The original filter describes how round one was assembled. Later rounds replay
     /// a snapshot of cards that still need practice, so keep the header truthful.
     public var modeTitle: String { roundNumber == 1 ? filter.title : "Review Round" }
@@ -64,10 +70,26 @@ public final class StudySession: ObservableObject {
         return knownKeys.contains(card.key)
     }
 
-    /// Cards that still need attention: anything not yet visited, plus visited cards
-    /// currently marked unknown. After a completed round this is simply the unknown set.
+    public var isCurrentAside: Bool {
+        guard let card = currentCard else { return false }
+        return asideKeys.contains(card.key)
+    }
+
+    /// Cards that still need attention: anything not yet visited, plus visited cards that
+    /// were neither marked known nor parked in the Almost Known bank. Parked words are
+    /// deliberately excluded — the point of parking one is that it stops coming back.
     public var remainingCards: [Flashcard] {
-        cards.filter { !visitedKeys.contains($0.key) || !knownKeys.contains($0.key) }
+        cards.filter { !visitedKeys.contains($0.key) || !isSettled($0.key) }
+    }
+
+    /// Cards seen this round that the user neither knew nor parked — the natural batch to
+    /// send to the Almost Known bank from the summary screen.
+    public var stillUnknownCards: [Flashcard] {
+        cards.filter { visitedKeys.contains($0.key) && !isSettled($0.key) }
+    }
+
+    private func isSettled(_ key: String) -> Bool {
+        knownKeys.contains(key) || asideKeys.contains(key)
     }
 
     // MARK: - Actions
@@ -79,6 +101,19 @@ public final class StudySession: ObservableObject {
     public func markCurrentKnown() {
         guard let card = currentCard else { return }
         knownKeys.insert(card.key)
+        asideKeys.remove(card.key)
+    }
+
+    /// Park the current card. Known words stay known — the store applies the same guard,
+    /// so the two never disagree about which bank a word is in.
+    public func markCurrentAside() {
+        guard let card = currentCard else { return }
+        markAside(key: card.key)
+    }
+
+    public func markAside(key: String) {
+        guard !knownKeys.contains(key) else { return }
+        asideKeys.insert(key)
     }
 
     public func unmarkCurrentKnown() {
@@ -93,6 +128,14 @@ public final class StudySession: ObservableObject {
 
     public func unmarkAllKnown() {
         knownKeys.removeAll()
+    }
+
+    public func unmarkAside(key: String) {
+        asideKeys.remove(key)
+    }
+
+    public func unmarkAllAside() {
+        asideKeys.removeAll()
     }
 
     /// Advance to the next card. Returns false when the round is finished.
@@ -117,12 +160,14 @@ public final class StudySession: ObservableObject {
     public func makeSummary() -> RoundSummary {
         let studied = visitedKeys.count
         let knownStudied = knownKeys.intersection(visitedKeys).count
+        let asideStudied = asideKeys.intersection(visitedKeys).count
         return RoundSummary(
             roundNumber: roundNumber,
             totalStudied: studied,
             markedKnown: knownStudied,
-            stillUnknown: studied - knownStudied,
-            unvisited: max(0, total - studied)
+            stillUnknown: studied - knownStudied - asideStudied,
+            unvisited: max(0, total - studied),
+            setAside: asideStudied
         )
     }
 }

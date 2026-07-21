@@ -10,8 +10,10 @@ public struct DeckBuilder {
     /// Build a shuffled deck ready for study.
     public func build(from selectedSets: [PracticeSet],
                       filter: KnownFilter,
-                      knownKeys: Set<String>) -> [Flashcard] {
-        var deck = mergedCards(from: selectedSets, filter: filter, knownKeys: knownKeys)
+                      knownKeys: Set<String>,
+                      asideKeys: Set<String> = []) -> [Flashcard] {
+        var deck = mergedCards(from: selectedSets, filter: filter,
+                               knownKeys: knownKeys, asideKeys: asideKeys)
         deck.shuffle()
         return deck
     }
@@ -19,8 +21,10 @@ public struct DeckBuilder {
     /// Build a deck in a stable, deterministic order (used by tests).
     public func buildOrdered(from selectedSets: [PracticeSet],
                              filter: KnownFilter,
-                             knownKeys: Set<String>) -> [Flashcard] {
-        mergedCards(from: selectedSets, filter: filter, knownKeys: knownKeys)
+                             knownKeys: Set<String>,
+                             asideKeys: Set<String> = []) -> [Flashcard] {
+        mergedCards(from: selectedSets, filter: filter,
+                    knownKeys: knownKeys, asideKeys: asideKeys)
     }
 
     // MARK: - Merging
@@ -58,14 +62,16 @@ public struct DeckBuilder {
 
     private func mergedCards(from selectedSets: [PracticeSet],
                              filter: KnownFilter,
-                             knownKeys: Set<String>) -> [Flashcard] {
+                             knownKeys: Set<String>,
+                             asideKeys: Set<String>) -> [Flashcard] {
         var order: [String] = []
         var accumulators: [String: CardAccumulator] = [:]
 
         for set in selectedSets {
             for item in set.items {
                 let key = item.key
-                guard passesFilter(key, filter: filter, knownKeys: knownKeys) else { continue }
+                guard passesFilter(key, filter: filter,
+                                   knownKeys: knownKeys, asideKeys: asideKeys) else { continue }
 
                 let acc: CardAccumulator
                 if let existing = accumulators[key] {
@@ -82,10 +88,13 @@ public struct DeckBuilder {
         return order.compactMap { accumulators[$0]?.makeCard() }
     }
 
-    private func passesFilter(_ key: String, filter: KnownFilter, knownKeys: Set<String>) -> Bool {
+    /// "Almost Known" words are parked out of the New pool, but they are not known: they
+    /// still belong to Study Everything and never to Review Known Words.
+    private func passesFilter(_ key: String, filter: KnownFilter,
+                              knownKeys: Set<String>, asideKeys: Set<String>) -> Bool {
         switch filter {
         case .includeKnown: return true
-        case .excludeKnown: return !knownKeys.contains(key)
+        case .excludeKnown: return !knownKeys.contains(key) && !asideKeys.contains(key)
         case .onlyKnown: return knownKeys.contains(key)
         }
     }

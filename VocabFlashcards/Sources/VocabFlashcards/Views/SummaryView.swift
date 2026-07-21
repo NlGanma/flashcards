@@ -33,6 +33,9 @@ struct SummaryView: View {
                 HStack(spacing: 14) {
                     statTile(value: summary.markedKnown, label: "Known", tint: Palette.success, icon: "checkmark.seal.fill")
                     statTile(value: summary.stillUnknown, label: "Still Learning", tint: Palette.learning, icon: "arrow.triangle.2.circlepath")
+                    if summary.setAside > 0 {
+                        statTile(value: summary.setAside, label: "Almost", tint: Palette.learning, icon: "hourglass")
+                    }
                     statTile(value: summary.totalStudied, label: "Studied", tint: Palette.indigo, icon: "rectangle.stack.fill")
                 }
 
@@ -125,6 +128,19 @@ struct SummaryView: View {
             .keyboardShortcut(.return, modifiers: [])
             .hoverLift(scale: 1.02)
 
+            // One tap to clear this round's leftovers out of the new pile without
+            // pretending they're known.
+            if stillUnknownCount > 0 {
+                Button {
+                    withAnimation(Motion.spring) { app.setAsideStillUnknown() }
+                } label: {
+                    Label("Set Aside \(stillUnknownCount) as Almost Known", systemImage: "hourglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(AlmostButtonStyle())
+                .help("Park the words you didn't know out of the new pile — revert them any time")
+            }
+
             HStack(spacing: 10) {
                 Button {
                     app.backToSetup()
@@ -135,7 +151,7 @@ struct SummaryView: View {
                 .buttonStyle(SoftButtonStyle(tint: Palette.indigo))
 
                 Button {
-                    app.showingKnownWords = true
+                    app.showWordManager(.known)
                 } label: {
                     Label("Known Words", systemImage: "checkmark.seal.fill")
                         .frame(maxWidth: .infinity)
@@ -144,6 +160,9 @@ struct SummaryView: View {
             }
         }
     }
+
+    /// Only offered for cards actually seen this round — unvisited cards were never judged.
+    private var stillUnknownCount: Int { app.stillUnknownCards.count }
 
     private var studyAgainTitle: String {
         guard summary.hasRemaining else { return "Study Again" }
