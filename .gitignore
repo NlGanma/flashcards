@@ -1,0 +1,11 @@
+.DS_Store
+
+# SwiftPM build products
+.build/
+dist/
+
+# Stray incremental-build artifacts left in the project root
+*.o
+*.d
+*.swiftdeps
+*.swiftdeps~
