@@ -34,4 +34,13 @@ public struct RoundSummary: Sendable, Equatable {
     /// True when every scheduled word was visited and marked known — a clean sweep.
     /// Parked words don't count: they were set aside, not learned.
     public var isPerfect: Bool { totalStudied > 0 && markedKnown == totalStudied && unvisited == 0 }
+
+    /// Whole-percent form for the summary ring. Never rounds up to 100 on a round that
+    /// still has words left (199/200 would), and never rounds down to 0 once something was
+    /// learned — either would contradict the tiles shown beside it.
+    public var knownPercent: Int {
+        let exact = knownFraction * 100
+        if exact >= 100 { return 100 }
+        return min(99, max(markedKnown > 0 ? 1 : 0, Int(exact.rounded())))
+    }
 }

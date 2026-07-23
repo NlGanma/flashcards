@@ -31,6 +31,35 @@ final class RecentFileStoreTests: XCTestCase {
         XCTAssertTrue(store.hasRemembered)
     }
 
+    /// Failing to open some other workbook must not discard the remembered one.
+    func testIsRememberedDistinguishesTheSavedFileFromAnyOther() throws {
+        let remembered = try makeFile(named: "remembered.xlsx")
+        let other = try makeFile(named: "other.xlsx")
+        let store = RecentFileStore(defaults: defaults)
+
+        store.save(url: remembered)
+
+        XCTAssertTrue(store.isRemembered(remembered))
+        XCTAssertFalse(store.isRemembered(other))
+    }
+
+    func testIsRememberedIgnoresPathFormatting() throws {
+        let file = try makeFile(named: "vocabulary.xlsx")
+        let store = RecentFileStore(defaults: defaults)
+        store.save(url: file)
+
+        let awkward = file.deletingLastPathComponent()
+            .appendingPathComponent(".")
+            .appendingPathComponent("vocabulary.xlsx")
+
+        XCTAssertTrue(store.isRemembered(awkward))
+    }
+
+    func testIsRememberedIsFalseWhenNothingWasEverSaved() throws {
+        let file = try makeFile(named: "vocabulary.xlsx")
+        XCTAssertFalse(RecentFileStore(defaults: defaults).isRemembered(file))
+    }
+
     func testResolveRejectsDirectory() {
         let store = RecentFileStore(defaults: defaults)
 

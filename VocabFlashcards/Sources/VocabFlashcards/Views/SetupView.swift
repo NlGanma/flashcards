@@ -16,19 +16,14 @@ struct SetupView: View {
                 .padding(.top, 26)
                 .padding(.bottom, 18)
 
+            // Messages live in the fixed chrome, not in the scrolling content: a file can
+            // be dropped from anywhere in the window, and a banner inserted above a
+            // scrolled-down set list would never be seen — the app would look like it
+            // silently ignored the file.
+            messages
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if let error = app.errorMessage {
-                        MessageBanner(kind: .error, text: error) {
-                            withAnimation { app.errorMessage = nil }
-                        }
-                    }
-                    if let info = app.infoMessage {
-                        MessageBanner(kind: .info, text: info) {
-                            withAnimation { app.infoMessage = nil }
-                        }
-                    }
-
                     headerRow
 
                     if let file = app.loadedFile {
@@ -52,6 +47,26 @@ struct SetupView: View {
             }
         }
         .overlay(alignment: .bottom) { startBar }
+    }
+
+    @ViewBuilder
+    private var messages: some View {
+        if app.errorMessage != nil || app.infoMessage != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                if let error = app.errorMessage {
+                    MessageBanner(kind: .error, text: error) {
+                        withAnimation { app.errorMessage = nil }
+                    }
+                }
+                if let info = app.infoMessage {
+                    MessageBanner(kind: .info, text: info) {
+                        withAnimation { app.infoMessage = nil }
+                    }
+                }
+            }
+            .padding(.horizontal, 30)
+            .padding(.bottom, 14)
+        }
     }
 
     // MARK: - Top bar

@@ -7,7 +7,16 @@ struct SummaryView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var appeared = SnapshotConfig.skipIntro
 
-    private var summary: RoundSummary { app.lastSummary ?? RoundSummary(roundNumber: 1, totalStudied: 0, markedKnown: 0, stillUnknown: 0) }
+    /// The last real result this screen showed. Leaving the summary clears `lastSummary`
+    /// in the same transaction as the route, and this view keeps rendering for the whole
+    /// cross-fade — without a remembered value the user's result would visibly collapse to
+    /// zeros on its way out.
+    @State private var shown: RoundSummary?
+
+    private var summary: RoundSummary {
+        app.lastSummary ?? shown
+            ?? RoundSummary(roundNumber: 1, totalStudied: 0, markedKnown: 0, stillUnknown: 0)
+    }
 
     var body: some View {
         ZStack {
@@ -51,8 +60,12 @@ struct SummaryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            shown = app.lastSummary
             withAnimation(Motion.gentleSpring) { appeared = true }
             if !SnapshotConfig.skipIntro { Haptics.mark() }
+        }
+        .onChange(of: app.lastSummary) { latest in
+            if let latest { shown = latest }
         }
     }
 
@@ -74,7 +87,7 @@ struct SummaryView: View {
                         .font(.system(size: 44, weight: .bold))
                         .foregroundStyle(Palette.success)
                 } else {
-                    Text("\(Int((summary.knownFraction * 100).rounded()))%")
+                    Text("\(knownPercent)%")
                         .font(.rounded(38, .bold))
                         .foregroundStyle(Color.primaryText(scheme))
                         .monospacedDigit()
@@ -86,6 +99,8 @@ struct SummaryView: View {
         }
         .frame(width: 170, height: 170)
     }
+
+    private var knownPercent: Int { summary.knownPercent }
 
     // MARK: - Stat tile
 

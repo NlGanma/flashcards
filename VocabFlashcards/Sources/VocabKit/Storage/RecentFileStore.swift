@@ -22,6 +22,13 @@ public final class RecentFileStore {
 
     public var hasRemembered: Bool { defaults.data(forKey: bookmarkKey) != nil || defaults.string(forKey: pathKey) != nil }
 
+    /// Whether `url` is the file currently remembered — so a failure to open some *other*
+    /// workbook doesn't discard a perfectly good auto-load bookmark.
+    public func isRemembered(_ url: URL) -> Bool {
+        guard let path = defaults.string(forKey: pathKey) else { return false }
+        return URL(fileURLWithPath: path).standardizedFileURL == url.standardizedFileURL
+    }
+
     // MARK: - Save / clear
 
     public func save(url: URL) {

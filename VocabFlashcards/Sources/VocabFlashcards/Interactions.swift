@@ -2,11 +2,16 @@ import SwiftUI
 import AppKit
 
 /// Native hover feedback: a subtle scale/lift plus the macOS pointing-hand cursor.
-/// Cursor push/pop is balanced and cleaned up on disappear so it can't get stuck.
+///
+/// `NSCursor`'s stack is process-global, so a push without its pop leaves the pointing
+/// hand stuck over the whole app. `cursor` can flip while the pointer is still inside the
+/// view — the Previous arrow becomes disabled the moment you click back to card 1 — so the
+/// pop is driven by whether this modifier actually pushed, never by the current flag.
 struct HoverEffect: ViewModifier {
     var scale: CGFloat = 1.02
     var cursor: Bool = true
     @State private var hovering = false
+    @State private var didPush = false
 
     func body(content: Content) -> some View {
         content
@@ -14,14 +19,21 @@ struct HoverEffect: ViewModifier {
             .animation(Motion.quick, value: hovering)
             .onHover { hovering = $0 }
             .onChange(of: hovering) { isHovering in
-                guard cursor else { return }
-                if isHovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                if isHovering {
+                    guard cursor, !didPush else { return }
+                    NSCursor.pointingHand.push()
+                    didPush = true
+                } else if didPush {
+                    NSCursor.pop()
+                    didPush = false
+                }
             }
             .onDisappear {
-                if hovering {
-                    if cursor { NSCursor.pop() }
-                    hovering = false
+                if didPush {
+                    NSCursor.pop()
+                    didPush = false
                 }
+                hovering = false
             }
     }
 }

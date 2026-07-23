@@ -104,6 +104,10 @@ public final class KnownWordsStore: ObservableObject {
 
     public func isAside(_ key: String) -> Bool { asideEntries[key] != nil }
 
+    public func isAside(word: String) -> Bool {
+        isAside(TextNormalizer.normalizedKey(word))
+    }
+
     /// Entries sorted alphabetically by display form, for the management screen.
     public var sortedEntries: [(key: String, display: String)] {
         Self.sorted(entries)

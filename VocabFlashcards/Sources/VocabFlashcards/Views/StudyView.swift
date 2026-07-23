@@ -220,6 +220,11 @@ private struct StudyContent: View {
 
     /// Returns true if the key was handled (and should be swallowed).
     private func handleKey(_ event: NSEvent) -> Bool {
+        // The monitor outlives the study screen: `onDisappear` only fires once the route
+        // transition has finished animating. Until then this view is still installed on
+        // top of the summary, so without this check a keypress meant for the summary
+        // (Return = Study Again) would be swallowed and applied to the finished round.
+        if app.route != .study { return false }
         // Don't hijack keys while a sheet or a text field is active.
         if app.showingKnownWords { return false }
         if NSApp.modalWindow != nil { return false }

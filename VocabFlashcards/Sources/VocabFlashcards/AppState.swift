@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 import VocabKit
 
@@ -52,6 +53,7 @@ final class AppState: ObservableObject {
     private let recentStore: RecentFileStore
     private let parser = XLSXVocabParser()
     private let deckBuilder = DeckBuilder()
+    private var storeObserver: AnyCancellable?
 
     init(knownStore: KnownWordsStore = KnownWordsStore(),
          recentStore: RecentFileStore = RecentFileStore()) {
@@ -60,6 +62,13 @@ final class AppState: ObservableObject {
         if let raw = UserDefaults.standard.string(forKey: Self.filterKey),
            let saved = KnownFilter(rawValue: raw) {
             pendingFilter = saved
+        }
+        // Screens read their counts through `app.knownStore` but observe only AppState, so
+        // a change to either bank has to be republished here — otherwise removing a single
+        // word from the manager leaves every deck count behind it stale until some
+        // unrelated AppState change happens to redraw them.
+        storeObserver = knownStore.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
         }
     }
 
@@ -106,7 +115,10 @@ final class AppState: ObservableObject {
 
     private func handle(_ error: VocabError, url: URL) {
         errorMessage = error.friendlyMessage
-        if case .cannotAccess = error { recentStore.clear() }
+        // Only forget the auto-load file when it is the one that just failed. Dropping an
+        // unreadable workbook used to wipe the bookmark for the file still on screen, so
+        // the next launch silently came up empty.
+        if case .cannotAccess = error, recentStore.isRemembered(url) { recentStore.clear() }
         // Keep any previously loaded file; otherwise fall back to the empty state.
         if loadedFile == nil { route = .empty }
     }
@@ -208,27 +220,38 @@ final class AppState: ObservableObject {
 
     // MARK: - In-study actions
 
+    /// The round is over the moment we leave the study screen, but the session is kept
+    /// alive so the summary can report on it. Every card-level action therefore has to ask
+    /// whether it is still legal: the summary is built from a snapshot, so mutating a
+    /// finished round silently desynchronizes what the user sees from what is stored — and
+    /// `visitedKeys` would grow to include cards that were never actually shown.
+    private var isStudying: Bool { route == .study && session != nil }
+
     func flip() {
+        guard isStudying else { return }
         Haptics.light()
         withAnimation(Motion.flip) { session?.flip() }
     }
 
     func markCurrentKnown() {
-        guard let card = session?.currentCard else { return }
+        guard isStudying, let card = session?.currentCard else { return }
         session?.markCurrentKnown()
         knownStore.markKnown(key: card.key, display: card.word)
         Haptics.mark()
         flash(.known, key: card.key)
+        refreshSummaryIfNeeded()
     }
 
     /// Park the current word in the temporary "Almost Known" bank: it leaves the New pool
     /// but never counts as known, and the whole bank can be reverted in one action.
     func markCurrentAside() {
-        guard let card = session?.currentCard, !knownStore.isKnown(card.key) else { return }
+        guard isStudying, let card = session?.currentCard,
+              !knownStore.isKnown(card.key) else { return }
         session?.markCurrentAside()
         knownStore.markAside(key: card.key, display: card.word)
         Haptics.light()
         flash(.aside, key: card.key)
+        refreshSummaryIfNeeded()
     }
 
     /// Shared "just marked" flourish. One token drives both banks, so a fresh mark always
@@ -249,7 +272,7 @@ final class AppState: ObservableObject {
     /// Card-level classification is symmetric: update both sources of truth, then
     /// continue so the same card never appears to undo the user's choice.
     func unmarkCurrentKnown() {
-        guard let card = session?.currentCard else { return }
+        guard isStudying, let card = session?.currentCard else { return }
         unmarkKnown(key: card.key)
         advance()
     }
@@ -271,7 +294,7 @@ final class AppState: ObservableObject {
 
     /// Card-level un-park: back to New, then continue.
     func unmarkCurrentAside() {
-        guard let card = session?.currentCard else { return }
+        guard isStudying, let card = session?.currentCard else { return }
         unmarkAside(key: card.key)
         advance()
     }
@@ -300,7 +323,7 @@ final class AppState: ObservableObject {
 
     /// Space/Enter behaviour: reveal the back, or advance if already revealed.
     func primaryAction() {
-        guard let session else { return }
+        guard isStudying, let session else { return }
         if session.isShowingBack {
             advance()
         } else {
@@ -309,7 +332,7 @@ final class AppState: ObservableObject {
     }
 
     func advance() {
-        guard let session else { return }
+        guard isStudying, let session else { return }
         if session.hasNext {
             navigatingForward = true
             // Snap the flip to the front BEFORE the slide (outside withAnimation) so the
@@ -324,7 +347,7 @@ final class AppState: ObservableObject {
     }
 
     func goPrevious() {
-        guard let session, session.hasPrevious else { return }
+        guard isStudying, let session, session.hasPrevious else { return }
         resetKnownFlash()
         navigatingForward = false
         session.isShowingBack = false            // instantly show English — no flip-back
@@ -345,7 +368,7 @@ final class AppState: ObservableObject {
 
     /// K key mirrors the visible card action: classify, persist, and continue.
     func toggleCurrentKnown() {
-        guard let session else { return }
+        guard isStudying, let session else { return }
         if session.isCurrentKnown {
             unmarkCurrentKnown()
         } else {
@@ -356,7 +379,7 @@ final class AppState: ObservableObject {
     /// A key mirrors the card's Almost action. Known words are left alone — the bank is
     /// for words still being learned.
     func toggleCurrentAside() {
-        guard let session, !session.isCurrentKnown else { return }
+        guard isStudying, let session, !session.isCurrentKnown else { return }
         if session.isCurrentAside {
             unmarkCurrentAside()
         } else {
@@ -365,9 +388,10 @@ final class AppState: ObservableObject {
     }
 
     /// Finish the current round now (also invoked by Escape) — lands on the summary with
-    /// whatever progress was made, rather than discarding it.
+    /// whatever progress was made, rather than discarding it. Finishing twice would
+    /// re-snapshot an already-frozen round, so this is study-only like the rest.
     func finishRound() {
-        guard let session else { return }
+        guard isStudying, let session else { return }
         let summary = session.makeSummary()
         Haptics.mark()
         resetKnownFlash()

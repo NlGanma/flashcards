@@ -161,6 +161,15 @@ enum SnapshotRenderer {
              name: "46_study_error_dark", dir: dir, dark: true)
         app.errorMessage = nil
 
+        // The setup screen's banner must sit in the fixed chrome — a drop error has to be
+        // visible even when the set list is scrolled down.
+        let errored = makeApp(known: known)
+        errored.loadFile(at: sampleURL, remember: false)
+        errored.errorMessage = "“notes.txt” isn't an Excel file. Please choose a file that ends in .xlsx."
+        save(RootView().environmentObject(errored), size: full, name: "28_setup_error", dir: dir)
+        save(RootView().environmentObject(errored), size: full, name: "29_setup_error_dark",
+             dir: dir, dark: true)
+
         // Study header with both bank badges, and the setup screen once words are parked.
         let banked = makeApp(known: known)
         banked.loadFile(at: sampleURL, remember: false)
