@@ -1,12 +1,13 @@
 import SwiftUI
 import VocabKit
 
-/// The panel that slides out beside a revealed card: for every sense, the definition on
-/// top and an SAT-level sentence beneath it in both languages.
+/// The panel that slides out beside a revealed card: one SAT-level sentence for each
+/// individual gloss in the definition, in both languages.
 ///
-/// It repeats the definition deliberately. Once the card has slid left the definition is
-/// no longer the thing your eye lands on, and the sentence only teaches anything if the
-/// meaning it demonstrates is sitting right above it.
+/// A definition like "恶棍，歹徒；不法的，邪恶的" is four separate meanings and gets four
+/// sentences. Each is headed by its own gloss rather than by the whole definition — the
+/// full definition is already on the card two inches to the left, and repeating it here
+/// would just be a second headline competing with the sentences.
 struct SentencePanelView: View {
     let card: Flashcard
     var onClose: () -> Void = {}
@@ -49,8 +50,8 @@ struct SentencePanelView: View {
                 .foregroundStyle(Color.primaryText(scheme))
             // Several meanings won't fit in a 380pt panel, and macOS hides its scrollers
             // until you scroll — so the count is the only thing telling you to look.
-            if card.senses.count > 1 {
-                Text("\(card.senses.count) meanings")
+            if entries.count > 1 {
+                Text("\(entries.count) meanings")
                     .font(.rounded(11, .medium))
                     .foregroundStyle(Color.secondaryText(scheme))
             }
@@ -86,14 +87,43 @@ struct SentencePanelView: View {
 
     // MARK: - Senses
 
+    /// One row per gloss that has a sentence, flattened across every sense of the card.
+    private struct Entry: Identifiable {
+        let id: Int
+        let partOfSpeech: String
+        let gloss: String
+        let example: Example
+        /// True for the first entry of each sense, which is where the part of speech goes.
+        let startsSense: Bool
+    }
+
+    private var entries: [Entry] {
+        var result: [Entry] = []
+        for sense in card.senses {
+            var first = true
+            for example in sense.examples {
+                result.append(Entry(id: result.count,
+                                    partOfSpeech: sense.partOfSpeech,
+                                    gloss: example.gloss.isEmpty ? sense.definition : example.gloss,
+                                    example: example,
+                                    startsSense: first))
+                first = false
+            }
+        }
+        return result
+    }
+
     @ViewBuilder
     private var content: some View {
-        if card.hasExamples {
+        let rows = entries
+        if rows.isEmpty {
+            emptyState
+        } else {
             SnapshotableScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    ForEach(Array(card.senses.enumerated()), id: \.offset) { index, sense in
-                        senseBlock(sense, number: card.senses.count > 1 ? index + 1 : nil)
-                        if index < card.senses.count - 1 {
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(rows) { entry in
+                        entryBlock(entry, number: rows.count > 1 ? entry.id + 1 : nil)
+                        if entry.id < rows.count - 1 {
                             Divider().opacity(0.35)
                         }
                     }
@@ -104,12 +134,10 @@ struct SentencePanelView: View {
             }
             // More than one meaning cannot fit; fade the bottom edge so the cut reads as
             // "there is more below" rather than as the footer's rule.
-            .mask(card.senses.count > 1
+            .mask(rows.count > 1
                   ? LinearGradient(colors: [.black, .black, .black, .black.opacity(0.15)],
                                    startPoint: .top, endPoint: .bottom)
                   : LinearGradient(colors: [.black, .black], startPoint: .top, endPoint: .bottom))
-        } else {
-            emptyState
         }
     }
 
@@ -136,8 +164,11 @@ struct SentencePanelView: View {
         .padding(.horizontal, 22)
     }
 
-    private func senseBlock(_ sense: Sense, number: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    /// One gloss and the sentence that teaches it. The gloss is a compact label, not a
+    /// headline — the card already carries the full definition at full size.
+    private func entryBlock(_ entry: Entry, number: Int?) -> some View {
+        let accent = scheme == .dark ? Palette.indigoLight : Palette.indigoDeep
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 7) {
                 if let number {
                     Text("\(number)")
@@ -146,54 +177,48 @@ struct SentencePanelView: View {
                         .frame(width: 17, height: 17)
                         .background(Circle().fill(Palette.indigo.opacity(0.85)))
                 }
-                if !sense.partOfSpeech.isEmpty {
-                    Text(sense.partOfSpeech)
-                        .font(.rounded(11, .semibold))
-                        .foregroundStyle(scheme == .dark ? Palette.indigoLight : Palette.indigoDeep)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                Text(entry.gloss)
+                    .font(.rounded(14, .bold))
+                    .foregroundStyle(Color.primaryText(scheme))
+                    .fixedSize(horizontal: false, vertical: true)
+                // The part of speech belongs to the sense, so it is shown once, on the
+                // first gloss of each sense, rather than repeated on every row.
+                if entry.startsSense, !entry.partOfSpeech.isEmpty {
+                    Text(entry.partOfSpeech)
+                        .font(.rounded(10, .semibold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
                         .background(Capsule().fill(Palette.indigo.opacity(scheme == .dark ? 0.20 : 0.14)))
                 }
             }
 
-            Text(sense.definition.isEmpty ? "—" : sense.definition)
-                .font(.rounded(19, .bold))
-                .foregroundStyle(Color.primaryText(scheme))
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let example = sense.example {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 7) {
+                HighlightedSentence(
+                    sentence: entry.example.english,
+                    highlights: SentenceHighlighter.englishRanges(in: entry.example.english,
+                                                                  word: card.word),
+                    size: 14,
+                    accent: accent,
+                    base: Color.primaryText(scheme)
+                )
+                if !entry.example.chinese.isEmpty {
                     HighlightedSentence(
-                        sentence: example.english,
-                        highlights: SentenceHighlighter.englishRanges(in: example.english, word: card.word),
-                        size: 14.5,
-                        accent: scheme == .dark ? Palette.indigoLight : Palette.indigoDeep,
-                        base: Color.primaryText(scheme)
+                        sentence: entry.example.chinese,
+                        highlights: SentenceHighlighter.chineseRanges(in: entry.example.chinese,
+                                                                      definition: entry.gloss),
+                        size: 12.5,
+                        accent: accent,
+                        base: Color.secondaryText(scheme),
+                        lineSpacing: 4
                     )
-                    if !example.chinese.isEmpty {
-                        HighlightedSentence(
-                            sentence: example.chinese,
-                            highlights: SentenceHighlighter.chineseRanges(in: example.chinese,
-                                                                          definition: sense.definition),
-                            size: 13,
-                            accent: scheme == .dark ? Palette.indigoLight : Palette.indigoDeep,
-                            base: Color.secondaryText(scheme),
-                            lineSpacing: 4
-                        )
-                    }
                 }
-                .padding(.leading, 12)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(Palette.indigo.opacity(scheme == .dark ? 0.35 : 0.22))
-                        .frame(width: 3)
-                }
-            } else {
-                Text("No sentence for this meaning yet.")
-                    .font(.rounded(12, .medium))
-                    .foregroundStyle(Color.secondaryText(scheme))
-                    .padding(.leading, 12)
+            }
+            .padding(.leading, 12)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Palette.indigo.opacity(scheme == .dark ? 0.35 : 0.22))
+                    .frame(width: 3)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

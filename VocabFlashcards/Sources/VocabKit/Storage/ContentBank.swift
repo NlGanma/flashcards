@@ -21,12 +21,14 @@ public final class ContentBank {
         public let definition: String?
         /// Replacement part of speech, when the original was wrong.
         public let partOfSpeech: String?
-        public let example: Example?
+        /// One sentence per gloss of the definition.
+        public let examples: [Example]
 
-        public init(definition: String? = nil, partOfSpeech: String? = nil, example: Example? = nil) {
+        public init(definition: String? = nil, partOfSpeech: String? = nil,
+                    examples: [Example] = []) {
             self.definition = definition
             self.partOfSpeech = partOfSpeech
-            self.example = example
+            self.examples = examples
         }
     }
 
@@ -56,7 +58,7 @@ public final class ContentBank {
     public var wordCount: Int { words.count }
 
     public var exampleCount: Int {
-        words.values.reduce(0) { $0 + $1.records.values.filter { $0.example != nil }.count }
+        words.values.reduce(0) { $0 + $1.records.values.reduce(0) { $0 + $1.examples.count } }
     }
 
     // MARK: - Resolution
@@ -81,7 +83,7 @@ public final class ContentBank {
             }
             resolved.append(Sense(partOfSpeech: record.partOfSpeech ?? sense.partOfSpeech,
                                   definition: record.definition ?? sense.definition,
-                                  example: record.example))
+                                  examples: record.examples))
         }
         // Never hand back a card with nothing on it. A drop that would blank the word is
         // treated as a curation mistake, not as an instruction to show an empty card.
@@ -163,13 +165,24 @@ public final class ContentBank {
         /// Corrected definition / part of speech, when they differ from the original.
         let definition: String?
         let partOfSpeech: String?
-        let english: String?
-        let chinese: String?
+        /// One entry per gloss of the definition.
+        let examples: [StoredExample]?
 
         enum CodingKeys: String, CodingKey {
             case match = "m"
             case definition = "d"
             case partOfSpeech = "p"
+            case examples = "ex"
+        }
+    }
+
+    private struct StoredExample: Decodable {
+        let gloss: String?
+        let english: String?
+        let chinese: String?
+
+        enum CodingKeys: String, CodingKey {
+            case gloss = "g"
             case english = "en"
             case chinese = "zh"
         }
@@ -184,11 +197,13 @@ public final class ContentBank {
             guard !key.isEmpty else { continue }
             var records: [String: Record] = [:]
             for sense in stored.senses ?? [] {
-                let example = Example(english: sense.english ?? "", chinese: sense.chinese ?? "")
+                let examples = (sense.examples ?? []).map {
+                    Example(gloss: $0.gloss ?? "", english: $0.english ?? "", chinese: $0.chinese ?? "")
+                }.filter { !$0.isEmpty }
                 records[signature(sense.match)] = Record(
                     definition: sense.definition,
                     partOfSpeech: sense.partOfSpeech,
-                    example: example.isEmpty ? nil : example
+                    examples: examples
                 )
             }
             let dropped = Set((stored.dropped ?? []).map(signature))

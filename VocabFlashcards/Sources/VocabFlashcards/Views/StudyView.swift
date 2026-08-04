@@ -37,20 +37,23 @@ private struct StudyContent: View {
     @FocusState private var focusedControl: StudyControlFocus?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 30)
+                    .padding(.top, 26)
+
+                Spacer(minLength: 12)
+
+                VStack(spacing: 16) {
+                    cardArea(height: stageHeight(in: geo.size.height))
+                    controls
+                }
                 .padding(.horizontal, 30)
-                .padding(.top, 26)
 
-            Spacer(minLength: 12)
-
-            VStack(spacing: 16) {
-                cardArea
-                controls
+                Spacer(minLength: 12)
             }
-            .padding(.horizontal, 30)
-
-            Spacer(minLength: 12)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: installKeyMonitor)
@@ -131,7 +134,17 @@ private struct StudyContent: View {
     /// The card is centered on its own; when the example panel opens the card shifts left
     /// by an offset instead of being re-laid-out, so the pair reads as one unit sliding
     /// over while the card keeps its slot in the layout for the next/previous transition.
-    private var cardArea: some View {
+    /// How tall the card/panel stage is. The card itself is always `Metric.cardHeight`;
+    /// the extra goes to the example panel, which routinely has three or four meanings to
+    /// show and can use every point of it. The stage is sized the same whether the panel
+    /// is open or not, so opening it never nudges the card or the arrows.
+    private func stageHeight(in windowHeight: CGFloat) -> CGFloat {
+        // ~264pt is the progress header, the arrow row and the padding around them. The
+        // cap keeps the panel from towering over the card it belongs to on a tall display.
+        min(520, max(Metric.cardHeight, windowHeight - 264))
+    }
+
+    private func cardArea(height stage: CGFloat) -> some View {
         GeometryReader { geo in
             let layout = SplitLayout(available: geo.size.width, showingPanel: panelVisible)
             ZStack {
@@ -170,16 +183,16 @@ private struct StudyContent: View {
                         // Without an identity of its own the panel's scroll view is reused
                         // across cards, carrying one word's scroll position into the next.
                         .id(card.key)
-                        .frame(width: layout.panelWidth, height: Metric.cardHeight)
+                        .frame(width: layout.panelWidth, height: stage)
                         .offset(x: panelVisible ? layout.panelOffset : layout.panelOffset + 30)
                         .opacity(panelVisible ? 1 : 0)
                         .allowsHitTesting(panelVisible)
                         .accessibilityHidden(!panelVisible)
                 }
             }
-            .frame(width: geo.size.width, height: Metric.cardHeight)
+            .frame(width: geo.size.width, height: stage)
         }
-        .frame(height: Metric.cardHeight)
+        .frame(height: stage)
     }
 
     /// The panel belongs to the revealed definition, so it is only ever on with the back.

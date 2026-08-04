@@ -33,14 +33,14 @@ final class CardContentTests: XCTestCase {
     func testBankAttachesExampleToMatchingDefinition() throws {
         let bank = try bank("""
         {"v":1,"words":{"keen":{"s":[
-          {"m":"敏锐的","en":"Her keen eye caught it.","zh":"她敏锐的眼光发现了它。"}
+          {"m":"敏锐的","ex":[{"en":"Her keen eye caught it.","zh":"她敏锐的眼光发现了它。"}]}
         ]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen",
                                          senses: [Sense(partOfSpeech: "adj.", definition: "敏锐的")])
         XCTAssertEqual(senses.count, 1)
-        XCTAssertEqual(senses[0].example?.english, "Her keen eye caught it.")
-        XCTAssertEqual(senses[0].example?.chinese, "她敏锐的眼光发现了它。")
+        XCTAssertEqual(senses[0].examples.first?.english, "Her keen eye caught it.")
+        XCTAssertEqual(senses[0].examples.first?.chinese, "她敏锐的眼光发现了它。")
         // The parsed definition and part of speech survive untouched.
         XCTAssertEqual(senses[0].definition, "敏锐的")
         XCTAssertEqual(senses[0].partOfSpeech, "adj.")
@@ -48,38 +48,38 @@ final class CardContentTests: XCTestCase {
 
     func testBankMatchesDefinitionIgnoringWhitespace() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的， 热心的","en":"E","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的， 热心的","ex":[{"en":"E","zh":"C"}]}]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen",
                                          senses: [Sense(partOfSpeech: "adj.", definition: "敏锐的，热心的")])
-        XCTAssertEqual(senses[0].example?.english, "E")
+        XCTAssertEqual(senses[0].examples.first?.english, "E")
     }
 
     func testBankMatchesTheOnlySenseEvenIfTheDefinitionDrifted() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"E","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"E","zh":"C"}]}]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen",
                                          senses: [Sense(partOfSpeech: "adj.", definition: "敏锐的（新写法）")])
-        XCTAssertEqual(senses[0].example?.english, "E")
+        XCTAssertEqual(senses[0].examples.first?.english, "E")
     }
 
     func testBankDoesNotGuessWhenAWordHasSeveralSenses() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"E","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"E","zh":"C"}]}]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen", senses: [
             Sense(partOfSpeech: "adj.", definition: "完全不同的释义"),
             Sense(partOfSpeech: "n.", definition: "挽歌")
         ])
-        XCTAssertNil(senses[0].example)
-        XCTAssertNil(senses[1].example)
+        XCTAssertTrue(senses[0].examples.isEmpty)
+        XCTAssertTrue(senses[1].examples.isEmpty)
     }
 
     func testBankAppliesDefinitionCorrection() throws {
         let bank = try bank("""
         {"v":1,"words":{"keen":{"s":[
-          {"m":"锋利的刀","d":"敏锐的","p":"adj.","en":"E","zh":"C"}
+          {"m":"锋利的刀","d":"敏锐的","p":"adj.","ex":[{"en":"E","zh":"C"}]}
         ]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen",
@@ -90,7 +90,7 @@ final class CardContentTests: XCTestCase {
 
     func testBankDropsAnUnsupportedDefinition() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"E","zh":"C"}],"x":["查无此义"]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"E","zh":"C"}]}],"x":["查无此义"]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen", senses: [
             Sense(partOfSpeech: "adj.", definition: "敏锐的"),
@@ -112,7 +112,7 @@ final class CardContentTests: XCTestCase {
 
     func testUnknownWordIsLeftAlone() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"E","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"E","zh":"C"}]}]}}}
         """)
         let senses = [Sense(partOfSpeech: "n.", definition: "先见之明")]
         XCTAssertEqual(bank.resolvedSenses(forKey: "foresight", senses: senses), senses)
@@ -120,17 +120,17 @@ final class CardContentTests: XCTestCase {
 
     func testEmptyExampleTextIsTreatedAsNoExample() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"","zh":""}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"","zh":""}]}]}}}
         """)
         let senses = bank.resolvedSenses(forKey: "keen",
                                          senses: [Sense(partOfSpeech: "adj.", definition: "敏锐的")])
-        XCTAssertNil(senses[0].example)
+        XCTAssertTrue(senses[0].examples.isEmpty)
     }
 
     func testBankCorrectsAMangledDisplayWord() throws {
         let bank = try bank("""
         {"v":1,"words":{"vicarious (vicarious)":{"w":"vicarious","s":[
-          {"m":"间接体验的，代理的","en":"E","zh":"C"}
+          {"m":"间接体验的，代理的","ex":[{"en":"E","zh":"C"}]}
         ]}}}
         """)
         let key = TextNormalizer.normalizedKey("vicarious (vicarious)")
@@ -161,9 +161,50 @@ final class CardContentTests: XCTestCase {
         let probe = Sense(partOfSpeech: "adj.", definition: "敏锐的，热心的，渴望的")
         let resolved = bank.resolvedSenses(forKey: "keen", senses: [probe])
         XCTAssertEqual(resolved.count, 1)
-        XCTAssertNotNil(resolved[0].example, "a known curated word lost its example")
-        XCTAssertFalse(resolved[0].example?.english.isEmpty ?? true)
-        XCTAssertFalse(resolved[0].example?.chinese.isEmpty ?? true)
+        XCTAssertFalse(resolved[0].examples.isEmpty, "a known curated word lost its examples")
+        XCTAssertFalse(resolved[0].examples.first?.english.isEmpty ?? true)
+        XCTAssertFalse(resolved[0].examples.first?.chinese.isEmpty ?? true)
+    }
+
+    // MARK: - Glosses
+
+    func testDefinitionSplitsIntoGlosses() {
+        XCTAssertEqual(Sense.splitGlosses("恶棍，歹徒；不法的，邪恶的"),
+                       ["恶棍", "歹徒", "不法的", "邪恶的"])
+        XCTAssertEqual(Sense.splitGlosses("敏锐的"), ["敏锐的"])
+        // A separator inside a parenthetical belongs to the gloss, not between glosses.
+        XCTAssertEqual(Sense.splitGlosses("没药（一种中药、香料）"), ["没药（一种中药、香料）"])
+        XCTAssertEqual(Sense.splitGlosses("（价格等）过高的，奢侈的"), ["（价格等）过高的", "奢侈的"])
+        XCTAssertEqual(Sense.splitGlosses(""), [])
+    }
+
+    func testBankAttachesOneExamplePerGloss() throws {
+        let bank = try bank("""
+        {"v":1,"words":{"miscreant":{"s":[{"m":"恶棍，歹徒；不法的，邪恶的","ex":[
+          {"g":"恶棍","en":"E1","zh":"Z1恶棍"},
+          {"g":"歹徒","en":"E2","zh":"Z2歹徒"},
+          {"g":"不法的","en":"E3","zh":"Z3不法的"},
+          {"g":"邪恶的","en":"E4","zh":"Z4邪恶的"}
+        ]}]}}}
+        """)
+        let senses = bank.resolvedSenses(forKey: "miscreant",
+                                         senses: [Sense(partOfSpeech: "n. / adj.",
+                                                        definition: "恶棍，歹徒；不法的，邪恶的")])
+        XCTAssertEqual(senses.count, 1)
+        XCTAssertEqual(senses[0].examples.count, 4)
+        XCTAssertEqual(senses[0].examples.map(\.gloss), ["恶棍", "歹徒", "不法的", "邪恶的"])
+        // Every gloss of the definition is covered by exactly one sentence.
+        XCTAssertEqual(Set(senses[0].examples.map(\.gloss)), Set(senses[0].glosses))
+    }
+
+    /// The card-edit file written before examples became a list must still load.
+    func testLegacySingleExampleDecodes() throws {
+        let legacy = """
+        {"partOfSpeech":"adj.","definition":"敏锐的","example":{"gloss":"","english":"E","chinese":"C"}}
+        """
+        let sense = try JSONDecoder().decode(Sense.self, from: Data(legacy.utf8))
+        XCTAssertEqual(sense.examples.count, 1)
+        XCTAssertEqual(sense.examples.first?.english, "E")
     }
 
     // MARK: - CardEditsStore
@@ -195,7 +236,7 @@ final class CardContentTests: XCTestCase {
 
     func testUserEditWinsOverTheBank() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"bank sentence","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"bank sentence","zh":"C"}]}]}}}
         """)
         let edits = CardEditsStore(directory: tempDir)
         edits.save(CardEdit(word: "keen (adj.)", senses: [
@@ -208,17 +249,17 @@ final class CardContentTests: XCTestCase {
 
         XCTAssertEqual(resolved.word, "keen (adj.)")
         XCTAssertEqual(resolved.senses.first?.definition, "我的释义")
-        XCTAssertEqual(resolved.senses.first?.example?.english, "my sentence")
+        XCTAssertEqual(resolved.senses.first?.examples.first?.english, "my sentence")
         // Identity never moves, so known-word memory keeps matching.
         XCTAssertEqual(resolved.key, "keen")
         // …and the curated view still shows what the file plus the bank say.
         XCTAssertEqual(resolver.curated(card("keen", [Sense(partOfSpeech: "adj.", definition: "敏锐的")]))
-                        .senses.first?.example?.english, "bank sentence")
+                        .senses.first?.examples.first?.english, "bank sentence")
     }
 
     func testDeckBuilderAppliesTheResolver() throws {
         let bank = try bank("""
-        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","en":"E","zh":"C"}]}}}
+        {"v":1,"words":{"keen":{"s":[{"m":"敏锐的","ex":[{"en":"E","zh":"C"}]}]}}}
         """)
         let set = PracticeSet(name: "Practice 1", items: [
             VocabItem(english: "keen", partOfSpeech: "adj.", definition: "敏锐的", setName: "Practice 1"),

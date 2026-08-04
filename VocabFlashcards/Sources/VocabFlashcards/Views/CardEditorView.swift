@@ -24,34 +24,63 @@ struct CardEditorView: View {
         _senses = State(initialValue: drafts.isEmpty ? [SenseDraft()] : drafts)
     }
 
+    /// One editable sentence, tied to the gloss it demonstrates.
+    private struct ExampleDraft: Identifiable {
+        let id = UUID()
+        var gloss: String
+        var english: String
+        var chinese: String
+
+        init(_ example: Example) {
+            gloss = example.gloss
+            english = example.english
+            chinese = example.chinese
+        }
+
+        init(gloss: String = "") {
+            self.gloss = gloss
+            english = ""
+            chinese = ""
+        }
+
+        var isBlank: Bool {
+            [gloss, english, chinese].allSatisfy {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        }
+
+        var trimmed: Example {
+            Example(gloss: gloss.trimmingCharacters(in: .whitespacesAndNewlines),
+                    english: english.trimmingCharacters(in: .whitespacesAndNewlines),
+                    chinese: chinese.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
     /// One editable meaning. Identity is synthesized so rows survive reordering and
     /// deletion while the user is typing into them.
     private struct SenseDraft: Identifiable {
         let id = UUID()
         var partOfSpeech: String
         var definition: String
-        var english: String
-        var chinese: String
+        var examples: [ExampleDraft]
 
         init(_ sense: Sense) {
             partOfSpeech = sense.partOfSpeech
             definition = sense.definition
-            english = sense.example?.english ?? ""
-            chinese = sense.example?.chinese ?? ""
+            examples = sense.examples.map(ExampleDraft.init)
+            if examples.isEmpty { examples = [ExampleDraft(gloss: sense.glosses.first ?? "")] }
         }
 
         init() {
             partOfSpeech = ""
             definition = ""
-            english = ""
-            chinese = ""
+            examples = [ExampleDraft()]
         }
 
         var trimmedSense: Sense {
             Sense(partOfSpeech: partOfSpeech.trimmingCharacters(in: .whitespacesAndNewlines),
                   definition: definition.trimmingCharacters(in: .whitespacesAndNewlines),
-                  example: Example(english: english.trimmingCharacters(in: .whitespacesAndNewlines),
-                                   chinese: chinese.trimmingCharacters(in: .whitespacesAndNewlines)))
+                  examples: examples.filter { !$0.isBlank }.map(\.trimmed))
         }
 
         /// Whether this block can be stored: a card sense is identified by its part of
@@ -65,13 +94,19 @@ struct CardEditorView: View {
         /// a sentence can't be saved, but it must never be silently thrown away either —
         /// it is usually the longest thing they wrote.
         var hasAnything: Bool {
-            hasMeaning
-                || !english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !chinese.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            hasMeaning || examples.contains { !$0.isBlank }
         }
 
         /// Typed a sentence but no meaning to attach it to — the one blocking state.
         var isOrphanedSentence: Bool { hasAnything && !hasMeaning }
+
+        /// The next gloss of this definition that doesn't have a sentence yet, so adding a
+        /// row lands on the meaning the user is most likely reaching for.
+        var nextUncoveredGloss: String {
+            let taken = Set(examples.map { $0.gloss.trimmingCharacters(in: .whitespacesAndNewlines) })
+            let all = Sense.splitGlosses(definition.trimmingCharacters(in: .whitespacesAndNewlines))
+            return all.first { !taken.contains($0) } ?? ""
+        }
     }
 
     /// Indexes of blocks that hold a sentence with nothing to attach it to.
@@ -225,15 +260,24 @@ struct CardEditorView: View {
                 }
             }
 
-            labelled("Example sentence") {
-                field("An SAT-level sentence using the word", text: $senses[index].english,
-                      font: .rounded(14), lines: 2...5)
+            // One sentence per gloss: "恶棍，歹徒；不法的，邪恶的" is four meanings and
+            // deserves four, so the sentences are a list rather than a single pair.
+            ForEach(Array(senses[index].examples.enumerated()), id: \.element.id) { exampleIndex, _ in
+                exampleRow(sense: index, example: exampleIndex)
             }
 
-            labelled("Chinese translation") {
-                field("句子的中文翻译", text: $senses[index].chinese,
-                      font: .rounded(14), lines: 2...4)
+            Button {
+                withAnimation(Motion.quick) {
+                    senses[index].examples.append(
+                        ExampleDraft(gloss: senses[index].nextUncoveredGloss))
+                }
+            } label: {
+                Label("Add a sentence", systemImage: "plus")
+                    .font(.rounded(12, .semibold))
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(scheme == .dark ? Palette.indigoLight : Palette.indigoDeep)
+            .hoverLift(scale: 1.02)
 
             if senses[index].isOrphanedSentence {
                 Label("A sentence needs a meaning to sit under. Add a part of speech or a definition, or this block can't be saved.",
@@ -256,6 +300,40 @@ struct CardEditorView: View {
                               lineWidth: senses[index].isOrphanedSentence ? 1.5 : 1)
         )
         .animation(Motion.quick, value: senses[index].isOrphanedSentence)
+    }
+
+    /// A gloss and the sentence pair that teaches it.
+    private func exampleRow(sense: Int, example: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                fieldLabel("Meaning shown")
+                Spacer()
+                Button {
+                    withAnimation(Motion.quick) { _ = senses[sense].examples.remove(at: example) }
+                } label: {
+                    Image(systemName: "minus.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.secondaryText(scheme))
+                }
+                .buttonStyle(.plain)
+                .disabled(senses[sense].examples.count <= 1)
+                .opacity(senses[sense].examples.count <= 1 ? 0.3 : 1)
+                .help("Remove this sentence")
+            }
+            field("e.g. 恶棍", text: $senses[sense].examples[example].gloss,
+                  font: .rounded(13, .semibold))
+            field("An SAT-level sentence using the word in this meaning",
+                  text: $senses[sense].examples[example].english,
+                  font: .rounded(14), lines: 2...5)
+            field("句子的中文翻译（需包含上面的释义）",
+                  text: $senses[sense].examples[example].chinese,
+                  font: .rounded(14), lines: 2...4)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: Metric.controlCorner, style: .continuous)
+                .fill(Color.primary.opacity(scheme == .dark ? 0.04 : 0.02))
+        )
     }
 
     private var addSenseButton: some View {
