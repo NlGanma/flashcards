@@ -208,7 +208,9 @@ private struct StudyContent: View {
 
         init(available: CGFloat, showingPanel: Bool) {
             let gap: CGFloat = 20
-            let panel = min(360, max(268, available * 0.36))
+            // The panel holds several sentences in two languages, so it takes a wide share
+            // of the window — enough that a sentence wraps to two lines instead of four.
+            let panel = min(440, max(310, available * 0.42))
             let room = showingPanel ? available - panel - gap : available
             let card = max(280, min(Metric.cardMaxWidth, room))
             self.panelWidth = panel

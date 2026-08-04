@@ -35,7 +35,7 @@ struct SentencePanelView: View {
         // the panel you can correct.
         .onTapGesture(count: 2, perform: onEdit)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Example sentences for \(card.word)")
+        .accessibilityLabel("Sentences for \(card.word)")
     }
 
     // MARK: - Chrome
@@ -45,11 +45,11 @@ struct SentencePanelView: View {
             Image(systemName: "text.quote")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(Palette.indigo)
-            Text("In context")
+            Text("Sentences")
                 .font(.rounded(13, .bold))
                 .foregroundStyle(Color.primaryText(scheme))
-            // Several meanings won't fit in a 380pt panel, and macOS hides its scrollers
-            // until you scroll — so the count is the only thing telling you to look.
+            // Several meanings won't always fit, and macOS hides its scrollers until you
+            // scroll — with no fade at the bottom edge, the count is what tells you to look.
             if entries.count > 1 {
                 Text("\(entries.count) meanings")
                     .font(.rounded(11, .medium))
@@ -64,8 +64,8 @@ struct SentencePanelView: View {
                     .background(Circle().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06)))
             }
             .buttonStyle(.plain)
-            .help("Close the example panel (S)")
-            .accessibilityLabel("Close example panel")
+            .help("Close the sentences (S)")
+            .accessibilityLabel("Close sentences")
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -132,12 +132,9 @@ struct SentencePanelView: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // More than one meaning cannot fit; fade the bottom edge so the cut reads as
-            // "there is more below" rather than as the footer's rule.
-            .mask(rows.count > 1
-                  ? LinearGradient(colors: [.black, .black, .black, .black.opacity(0.15)],
-                                   startPoint: .top, endPoint: .bottom)
-                  : LinearGradient(colors: [.black, .black], startPoint: .top, endPoint: .bottom))
+            // No fade at the bottom edge — it dimmed real text. A persistent scroller does
+            // the same job of saying "there is more below" without touching legibility.
+            .scrollIndicators(.visible)
         }
     }
 

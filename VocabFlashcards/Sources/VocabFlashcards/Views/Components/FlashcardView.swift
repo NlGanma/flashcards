@@ -217,7 +217,7 @@ struct FlashcardView: View {
             HStack(spacing: 6) {
                 Image(systemName: unavailable ? "text.quote" : "text.quote")
                     .font(.system(size: 11, weight: .bold))
-                Text(unavailable ? "No example" : "Example")
+                Text(unavailable ? "No sentence" : "Sentence")
                     .font(.rounded(12, .semibold))
                 Text("S")
                     .font(.rounded(10, .bold))
@@ -235,9 +235,9 @@ struct FlashcardView: View {
         }
         .buttonStyle(.plain)
         .help(chipHelp)
-        .accessibilityLabel(on ? "Hide example sentences"
-                               : (unavailable ? "No example sentence for \(card.word)"
-                                              : "Show example sentences"))
+        .accessibilityLabel(on ? "Hide sentences"
+                               : (unavailable ? "No sentence for \(card.word)"
+                                              : "Show sentences"))
         .accessibilityHint(unavailable
                            ? "Opens the panel where you can write one. Shortcut: S"
                            : "Shortcut: S")
@@ -246,8 +246,8 @@ struct FlashcardView: View {
     }
 
     private var chipHelp: String {
-        if isShowingSentence { return "Hide the example sentences (S)" }
-        if !card.hasExamples { return "No example sentence yet — open the panel and double-click to write one (S)" }
+        if isShowingSentence { return "Hide the sentences (S)" }
+        if !card.hasExamples { return "No sentence yet — open the panel and double-click to write one (S)" }
         return "Show this word in a sentence (S)"
     }
 
