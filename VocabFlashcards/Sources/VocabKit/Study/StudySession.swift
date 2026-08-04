@@ -15,6 +15,9 @@ public final class StudySession: ObservableObject {
     @Published public private(set) var currentIndex: Int = 0
     /// Whether the back of the current card is showing.
     @Published public var isShowingBack: Bool = false
+    /// Whether the example panel is open beside the card. Only meaningful while the back
+    /// is showing — the sentence belongs to a definition the user is already looking at.
+    @Published public var isShowingSentence: Bool = false
     /// Current known/unknown state for cards in this deck. Seeded from the global store
     /// so Review Known and Study Everything start from the state the UI displays.
     @Published public private(set) var knownKeys: Set<String>
@@ -94,9 +97,21 @@ public final class StudySession: ObservableObject {
 
     // MARK: - Actions
 
-    public func flip() { isShowingBack.toggle() }
+    public func flip() {
+        isShowingBack.toggle()
+        // The panel hangs off the definition; going back to the English side closes it.
+        if !isShowingBack { isShowingSentence = false }
+    }
 
     public func showBack() { isShowingBack = true }
+
+    /// Swap in edited content for a card, wherever it sits in the deck. Identity is the
+    /// key, so the deck order, the current position, and every bank membership are
+    /// untouched.
+    public func replaceCard(_ card: Flashcard) {
+        guard let index = cards.firstIndex(where: { $0.key == card.key }) else { return }
+        cards[index] = card
+    }
 
     public func markCurrentKnown() {
         guard let card = currentCard else { return }
@@ -144,6 +159,7 @@ public final class StudySession: ObservableObject {
         guard hasNext else { return false }
         currentIndex += 1
         isShowingBack = false
+        isShowingSentence = false
         if let currentCard { visitedKeys.insert(currentCard.key) }
         return true
     }
@@ -152,6 +168,7 @@ public final class StudySession: ObservableObject {
         guard hasPrevious else { return }
         currentIndex -= 1
         isShowingBack = false
+        isShowingSentence = false
         if let currentCard { visitedKeys.insert(currentCard.key) }
     }
 

@@ -47,6 +47,13 @@ struct RootView: View {
             KnownWordsView(store: app.knownStore)
                 .environmentObject(app)
         }
+        .sheet(item: $app.editingCard) { card in
+            // Keyed by the card so reopening the editor on a different word rebuilds its
+            // draft state instead of reusing the previous word's text fields.
+            CardEditorView(card: card)
+                .id(card.key)
+                .environmentObject(app)
+        }
     }
 
     @ViewBuilder

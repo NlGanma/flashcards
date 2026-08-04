@@ -38,6 +38,13 @@ struct KnownWordsView: View {
         }
         .frame(width: 460, height: 560)
         .background(Color.surface(scheme))
+        // ⌘⇧K / ⌘⇧A switch banks from the menu without going through the segments, so
+        // reset the filter here too — otherwise the other bank opens pre-filtered by a
+        // search the user can no longer see a reason for.
+        .onChange(of: app.knownWordsTab) { _ in
+            searchText = ""
+            showClearConfirm = false
+        }
     }
 
     private var header: some View {

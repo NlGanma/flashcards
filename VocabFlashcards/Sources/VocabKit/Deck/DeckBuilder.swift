@@ -1,8 +1,8 @@
 import Foundation
 
 /// Turns selected practice sets into a study deck: applies the known-word filter,
-/// merges duplicate English words into single cards, removes duplicate senses, and
-/// (optionally) shuffles.
+/// merges duplicate English words into single cards, removes duplicate senses, applies
+/// stored content (examples, corrections, user edits), and (optionally) shuffles.
 public struct DeckBuilder {
 
     public init() {}
@@ -11,9 +11,10 @@ public struct DeckBuilder {
     public func build(from selectedSets: [PracticeSet],
                       filter: KnownFilter,
                       knownKeys: Set<String>,
-                      asideKeys: Set<String> = []) -> [Flashcard] {
+                      asideKeys: Set<String> = [],
+                      resolver: CardContentResolving? = nil) -> [Flashcard] {
         var deck = mergedCards(from: selectedSets, filter: filter,
-                               knownKeys: knownKeys, asideKeys: asideKeys)
+                               knownKeys: knownKeys, asideKeys: asideKeys, resolver: resolver)
         deck.shuffle()
         return deck
     }
@@ -22,9 +23,10 @@ public struct DeckBuilder {
     public func buildOrdered(from selectedSets: [PracticeSet],
                              filter: KnownFilter,
                              knownKeys: Set<String>,
-                             asideKeys: Set<String> = []) -> [Flashcard] {
+                             asideKeys: Set<String> = [],
+                             resolver: CardContentResolving? = nil) -> [Flashcard] {
         mergedCards(from: selectedSets, filter: filter,
-                    knownKeys: knownKeys, asideKeys: asideKeys)
+                    knownKeys: knownKeys, asideKeys: asideKeys, resolver: resolver)
     }
 
     // MARK: - Merging
@@ -45,9 +47,9 @@ public struct DeckBuilder {
         func add(pos: String, def: String, set: String) {
             // A sense is only recorded when it carries some content.
             if !(pos.isEmpty && def.isEmpty) {
-                let dedupKey = "\(pos.lowercased())\u{0}\(def.lowercased())"
-                if seenSenses.insert(dedupKey).inserted {
-                    senses.append(Sense(partOfSpeech: pos, definition: def))
+                let sense = Sense(partOfSpeech: pos, definition: def)
+                if seenSenses.insert(sense.meaningSignature).inserted {
+                    senses.append(sense)
                 }
             }
             if !set.isEmpty, seenSets.insert(set).inserted {
@@ -63,7 +65,8 @@ public struct DeckBuilder {
     private func mergedCards(from selectedSets: [PracticeSet],
                              filter: KnownFilter,
                              knownKeys: Set<String>,
-                             asideKeys: Set<String>) -> [Flashcard] {
+                             asideKeys: Set<String>,
+                             resolver: CardContentResolving?) -> [Flashcard] {
         var order: [String] = []
         var accumulators: [String: CardAccumulator] = [:]
 
@@ -85,7 +88,9 @@ public struct DeckBuilder {
             }
         }
 
-        return order.compactMap { accumulators[$0]?.makeCard() }
+        let cards = order.compactMap { accumulators[$0]?.makeCard() }
+        guard let resolver else { return cards }
+        return cards.map(resolver.resolve)
     }
 
     /// "Almost Known" words are parked out of the New pool, but they are not known: they

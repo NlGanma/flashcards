@@ -43,7 +43,15 @@ struct FlashcardView: View {
     var isAsideFlash: Bool = false
     var isCurrentKnown: Bool = false
     var isCurrentAside: Bool = false
+    /// Whether the example panel is currently open beside this card.
+    var isShowingSentence: Bool = false
+    /// The footer sheds width in two stages as the card gives room to the example panel:
+    /// the key hints go first, and only a genuinely narrow card shortens its labels.
+    var showsKeyCaps: Bool = true
+    var usesShortLabels: Bool = false
     var onFlip: () -> Void = {}
+    var onToggleExamples: () -> Void = {}
+    var onEdit: () -> Void = {}
     var onMarkKnown: () -> Void = {}
     var onUnmarkKnown: () -> Void = {}
     var onMarkAside: () -> Void = {}
@@ -133,24 +141,10 @@ struct FlashcardView: View {
         cardSurface(tinted: false) {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(card.word)
-                            .font(.rounded(26, .bold))
-                            .tracking(-0.5)
-                            .foregroundStyle(Color.primaryText(scheme))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                        Spacer(minLength: 8)
-                        if !card.sourceSets.isEmpty {
-                            Text(card.sourceSets.joined(separator: " · "))
-                                .font(.rounded(12, .medium))
-                                .foregroundStyle(Color.secondaryText(scheme))
-                                .lineLimit(1)
-                        }
-                    }
-                    .padding(.horizontal, 26)
-                    .padding(.top, 20)
-                    .padding(.bottom, 12)
+                    backHeader
+                        .padding(.horizontal, 26)
+                        .padding(.top, 18)
+                        .padding(.bottom, 12)
 
                     Divider().opacity(0.4).padding(.horizontal, 26)
 
@@ -158,15 +152,103 @@ struct FlashcardView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .contentShape(Rectangle())
+                // Declared before the single tap so the double-click wins; on this face a
+                // single tap only flips back, so the small delay it costs is unnoticeable.
+                .onTapGesture(count: 2, perform: onEdit)
                 .onTapGesture(perform: onFlip)
-                .accessibilityElement(children: .combine)
-                .accessibilityHint("Activate to show the word again")
-                .accessibilityAddTraits(.isButton)
+                // `.contain`, not `.combine`: the example chip lives in this subtree and
+                // combining would fold the only control on the face into a run-on string
+                // of the word, its sets and every definition, leaving it unreachable by
+                // VoiceOver or Full Keyboard Access. Tap gestures aren't exposed to
+                // assistive tech at all, so both are republished as named actions.
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Definition of \(card.word)")
+                .accessibilityAction(named: "Show the word again", onFlip)
+                .accessibilityAction(named: "Edit this card", onEdit)
 
                 knownActionFooter
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    /// The word, where it came from, and the way into the example panel. The source line
+    /// sits under the word rather than opposite it so the chip owns the right edge — it is
+    /// the only thing in this row you can act on.
+    private var backHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(card.word)
+                    .font(.rounded(26, .bold))
+                    .tracking(-0.5)
+                    .foregroundStyle(Color.primaryText(scheme))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                if !card.sourceSets.isEmpty {
+                    Text(card.sourceSets.joined(separator: " · "))
+                        .font(.rounded(11, .medium))
+                        .foregroundStyle(Color.secondaryText(scheme))
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            exampleChip
+        }
+    }
+
+    /// Three states, and none of them is "disabled": the panel is still worth opening on a
+    /// word with no sentence, because that is where you write one. The unavailable state
+    /// therefore gets its own legible neutral treatment rather than a blanket opacity,
+    /// which would drop 12pt text below a readable contrast ratio while still accepting
+    /// clicks — looking switched off and behaving switched on.
+    private var exampleChip: some View {
+        let on = isShowingSentence
+        let unavailable = !card.hasExamples && !on
+        let tint: Color = unavailable
+            ? Color.secondaryText(scheme)
+            : (scheme == .dark ? Palette.indigoLight : Palette.indigoDeep)
+        let fill: AnyShapeStyle = on
+            ? AnyShapeStyle(Palette.accentGradient)
+            : AnyShapeStyle(unavailable
+                            ? Color.primary.opacity(scheme == .dark ? 0.10 : 0.06)
+                            : Palette.indigo.opacity(scheme == .dark ? 0.18 : 0.11))
+
+        return Button(action: onToggleExamples) {
+            HStack(spacing: 6) {
+                Image(systemName: unavailable ? "text.quote" : "text.quote")
+                    .font(.system(size: 11, weight: .bold))
+                Text(unavailable ? "No example" : "Example")
+                    .font(.rounded(12, .semibold))
+                Text("S")
+                    .font(.rounded(10, .bold))
+                    .frame(width: 16, height: 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.primary.opacity(on ? 0.18 : (scheme == .dark ? 0.10 : 0.07)))
+                    )
+            }
+            .foregroundStyle(on ? Color.white : tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(fill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(chipHelp)
+        .accessibilityLabel(on ? "Hide example sentences"
+                               : (unavailable ? "No example sentence for \(card.word)"
+                                              : "Show example sentences"))
+        .accessibilityHint(unavailable
+                           ? "Opens the panel where you can write one. Shortcut: S"
+                           : "Shortcut: S")
+        .accessibilityAddTraits(on ? [.isSelected] : [])
+        .hoverLift(scale: 1.05)
+    }
+
+    private var chipHelp: String {
+        if isShowingSentence { return "Hide the example sentences (S)" }
+        if !card.hasExamples { return "No example sentence yet — open the panel and double-click to write one (S)" }
+        return "Show this word in a sentence (S)"
     }
 
     /// Two ways to file a word: the green action commits it to the permanent known list,
@@ -177,7 +259,8 @@ struct FlashcardView: View {
             if isCurrentKnown {
                 focusedAction(.knownAction,
                     Button(action: onUnmarkKnown) {
-                        actionLabel("Mark Unknown & Continue", icon: "arrow.uturn.backward.circle.fill")
+                        actionLabel(usesShortLabels ? "Mark Unknown" : "Mark Unknown & Continue",
+                                    icon: "arrow.uturn.backward.circle.fill")
                     }
                     .buttonStyle(FilledButtonStyle(gradient: Palette.learningGradient, glow: Palette.learning))
                     .help("Move this word back to still learning and continue (K)")
@@ -187,7 +270,8 @@ struct FlashcardView: View {
             } else {
                 focusedAction(.knownAction,
                     Button(action: onMarkKnown) {
-                        actionLabel("Mark Known & Continue", icon: "checkmark.circle.fill")
+                        actionLabel(usesShortLabels ? "Mark Known" : "Mark Known & Continue",
+                                    icon: "checkmark.circle.fill")
                     }
                     .buttonStyle(FilledButtonStyle(gradient: Palette.successGradient, glow: Palette.success))
                     .help("Mark known and continue (K)")
@@ -196,7 +280,7 @@ struct FlashcardView: View {
                 )
             }
 
-            keyCap("K")
+            if showsKeyCaps { keyCap("K") }
 
             if !isCurrentKnown {
                 // A toggle chip rather than a second swapping label: it keeps one width in
@@ -216,7 +300,7 @@ struct FlashcardView: View {
                     .hoverLift(scale: 1.03)
                 )
 
-                keyCap("A")
+                if showsKeyCaps { keyCap("A") }
             }
         }
         .frame(maxWidth: .infinity)
@@ -314,6 +398,9 @@ struct FlashcardView: View {
         .frame(maxWidth: .infinity, alignment: single ? .center : .leading)
         .padding(.horizontal, 28)
         .padding(.vertical, 14)
+        // Merging the part-of-speech chips into the definitions is what you want *here* —
+        // it reads as one sentence instead of a stutter of badges and fragments.
+        .accessibilityElement(children: .combine)
     }
 
     private func senseRow(_ sense: Sense, centered: Bool) -> some View {

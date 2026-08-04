@@ -20,6 +20,10 @@ let package = Package(
             name: "VocabKit",
             dependencies: [
                 .product(name: "CoreXLSX", package: "CoreXLSX")
+            ],
+            resources: [
+                // Curated SAT example sentences and definition corrections.
+                .copy("Resources/curated_content.json")
             ]
         ),
         // The SwiftUI macOS application.

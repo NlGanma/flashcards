@@ -273,6 +273,37 @@ final class KnownWordsStoreTests: XCTestCase {
         XCTAssertEqual(store.asideKeys, ["abscond"])
     }
 
+    func testReconcileDisplaysRepairsAStaleSpellingWithoutRekeying() {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(key: "histrionic (histrionic", display: "histrionic (histrionic")
+        store.markAside(key: "appraise (appraisal", display: "appraise (appraisal")
+
+        store.reconcileDisplays([
+            "histrionic (histrionic": "histrionic (histrionics)",
+            "appraise (appraisal": "appraise (appraisal)"
+        ])
+        store.flush()
+
+        let reloaded = KnownWordsStore(directory: tempDir)
+        XCTAssertTrue(reloaded.isKnown("histrionic (histrionic"), "the key must not move")
+        XCTAssertEqual(reloaded.entries["histrionic (histrionic"], "histrionic (histrionics)")
+        XCTAssertEqual(reloaded.asideEntries["appraise (appraisal"], "appraise (appraisal)")
+    }
+
+    func testReconcileDisplaysIgnoresUnknownWordsAndWritesNothingWhenNothingChanged() throws {
+        let store = KnownWordsStore(directory: tempDir)
+        store.markKnown(word: "keen")
+        store.flush()
+        let before = try Data(contentsOf: persistedFileURL)
+
+        store.reconcileDisplays(["keen": "keen", "unrelated": "Unrelated"])
+        store.flush()
+
+        XCTAssertEqual(store.count, 1)
+        XCTAssertFalse(store.isKnown("unrelated"))
+        XCTAssertEqual(try Data(contentsOf: persistedFileURL), before)
+    }
+
     func testFirstLaunchBacksUpAnExistingStoreOnce() throws {
         let originalJSON = #"{"v":2,"w":{"abate":""}}"#
         try Data(originalJSON.utf8).write(to: persistedFileURL)

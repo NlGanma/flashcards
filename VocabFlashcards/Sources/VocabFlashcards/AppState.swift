@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
 
     // Sheets & transient messages
     @Published var showingKnownWords = false
+    /// The card the editor is open on, if any.
+    @Published var editingCard: Flashcard?
     /// Which bank the word manager opens on.
     @Published var knownWordsTab: WordBank = .known
     @Published var errorMessage: String?
@@ -50,15 +52,22 @@ final class AppState: ObservableObject {
     @Published var navigatingForward: Bool = true
 
     let knownStore: KnownWordsStore
+    let editsStore: CardEditsStore
     private let recentStore: RecentFileStore
     private let parser = XLSXVocabParser()
     private let deckBuilder = DeckBuilder()
+    /// Merges curated example sentences and the user's own card edits onto parsed cards.
+    private let resolver: CardContentResolver
     private var storeObserver: AnyCancellable?
 
     init(knownStore: KnownWordsStore = KnownWordsStore(),
-         recentStore: RecentFileStore = RecentFileStore()) {
+         recentStore: RecentFileStore = RecentFileStore(),
+         editsStore: CardEditsStore = CardEditsStore(),
+         contentBank: ContentBank = .bundled) {
         self.knownStore = knownStore
         self.recentStore = recentStore
+        self.editsStore = editsStore
+        self.resolver = CardContentResolver(bank: contentBank, edits: editsStore)
         if let raw = UserDefaults.standard.string(forKey: Self.filterKey),
            let saved = KnownFilter(rawValue: raw) {
             pendingFilter = saved
@@ -104,6 +113,12 @@ final class AppState: ObservableObject {
                 self.lastSummary = nil
                 self.route = .setup
             }
+            // Repair display forms saved by older cleaning rules, now that we know how
+            // every word in this file reads today. No-op once they agree.
+            knownStore.reconcileDisplays(
+                Dictionary(file.sets.flatMap { $0.items }.map { ($0.key, $0.english) },
+                           uniquingKeysWith: { first, _ in first })
+            )
             if remember { recentStore.save(url: url) }
         } catch let error as VocabError {
             handle(error, url: url)
@@ -181,12 +196,56 @@ final class AppState: ObservableObject {
                                  asideKeys: knownStore.asideKeys).count
     }
 
+    // MARK: - Card editing
+
+    /// Open the editor on the card being studied (double-click, or ⌘E).
+    func beginEditingCurrentCard() {
+        guard isStudying, let card = session?.currentCard else { return }
+        editingCard = card
+    }
+
+    /// Commit the editor's contents: remembered locally, and swapped into the running
+    /// round so the change is visible the moment the sheet closes.
+    func saveCardEdit(word: String, senses: [Sense]) {
+        guard let card = editingCard else { return }
+        let cleanSenses = senses.filter { !$0.definition.isEmpty || !$0.partOfSpeech.isEmpty }
+        guard !cleanSenses.isEmpty else { return }
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = trimmed.isEmpty ? card.word : trimmed
+        editsStore.save(CardEdit(word: display, senses: cleanSenses), for: card.key)
+        session?.replaceCard(card.with(word: display, senses: cleanSenses))
+        editingCard = nil
+    }
+
+    /// Throw the edit away and go back to the spreadsheet's own content.
+    func revertCardEdit() {
+        guard let card = editingCard else { return }
+        editsStore.revert(key: card.key)
+        if let original = curatedCard(for: card.key) { session?.replaceCard(original) }
+        editingCard = nil
+    }
+
+    var editingCardIsEdited: Bool {
+        guard let card = editingCard else { return false }
+        return editsStore.hasEdit(for: card.key)
+    }
+
+    /// The card as the spreadsheet and the curated bank define it, with any user edit
+    /// ignored — what "revert" restores, and what the editor shows as the original.
+    func curatedCard(for key: String) -> Flashcard? {
+        guard let file = loadedFile else { return nil }
+        let raw = deckBuilder.buildOrdered(from: file.sets, filter: .includeKnown, knownKeys: [])
+        guard let card = raw.first(where: { $0.key == key }) else { return nil }
+        return resolver.curated(card)
+    }
+
     /// Start a run immediately with the current selection and the chosen filter.
     func startStudy(filter: KnownFilter) {
         pendingFilter = filter
         let deck = deckBuilder.build(from: selectedSets, filter: filter,
                                      knownKeys: knownStore.knownKeys,
-                                     asideKeys: knownStore.asideKeys)
+                                     asideKeys: knownStore.asideKeys,
+                                     resolver: resolver)
         guard !deck.isEmpty else {
             infoMessage = emptyDeckMessage(for: filter)
             return
@@ -231,6 +290,20 @@ final class AppState: ObservableObject {
         guard isStudying else { return }
         Haptics.light()
         withAnimation(Motion.flip) { session?.flip() }
+    }
+
+    /// S: open or close the example panel. The card slides left to make room for it.
+    /// Pressed on the English side it reveals the definition too — asking to see the word
+    /// in a sentence is asking to see the answer.
+    func toggleSentence() {
+        guard isStudying, let session else { return }
+        Haptics.light()
+        if session.isShowingBack {
+            withAnimation(Motion.spring) { session.isShowingSentence.toggle() }
+        } else {
+            withAnimation(Motion.flip) { session.isShowingBack = true }
+            withAnimation(Motion.spring) { session.isShowingSentence = true }
+        }
     }
 
     func markCurrentKnown() {
