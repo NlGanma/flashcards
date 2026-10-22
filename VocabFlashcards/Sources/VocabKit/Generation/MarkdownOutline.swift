@@ -1,8 +1,8 @@
 import Foundation
 
 /// A Markdown document cut along its headings — the shape a local model needs to turn
-/// notes into cards. Each top-level section becomes a practice set, and the sections are
-/// packed into chunks small enough to fit a modest context window.
+/// notes into cards. Each top-level section becomes a practice set, and is sent to the
+/// model on its own, in pieces small enough to fit a modest context window.
 ///
 /// This is deliberately not a Markdown renderer: the model reads Markdown fine, so the
 /// text is passed through as written. The outline only has to find the section
@@ -72,50 +72,28 @@ public struct MarkdownOutline: Hashable, Sendable {
 
     // MARK: - Chunking
 
-    /// A piece of the document sent to the model in one request. It may hold several
-    /// small sections, so the model is told which ones and tags each card with its own.
+    /// A piece of the document sent to the model in one request: one section, or one
+    /// part of a long one. Sections are never packed together — asked to sort cards from
+    /// several sections, a 7B model files them under the wrong one, and the section is the
+    /// card's practice set.
     public struct Chunk: Hashable, Sendable {
         public let index: Int
-        /// Titles of the sections in this chunk, in order. Never empty.
+        /// Titles of the sections in this chunk. Never empty.
         public let sections: [String]
-        /// Markdown handed to the model, each section under its own `##` heading.
+        /// Markdown handed to the model, under the section's `##` heading.
         public let text: String
     }
 
-    /// Pack sections into chunks of at most `maxTokens` (estimated). A section larger
-    /// than the budget is split between paragraphs, each piece keeping its heading.
+    /// One chunk per section, a section larger than `maxTokens` (estimated) split between
+    /// paragraphs, each piece keeping its heading.
     public func chunks(maxTokens: Int = 1500) -> [Chunk] {
-        var pieces: [(section: String, text: String)] = []
+        var chunks: [Chunk] = []
         for section in sections {
-            let heading = Self.estimatedTokens("## \(section.title)\n\n")
-            for part in Self.split(section.body, maxTokens: max(1, maxTokens - heading)) {
-                pieces.append((section.title, part))
+            let heading = "## \(section.title)\n\n"
+            for part in Self.split(section.body, maxTokens: max(1, maxTokens - Self.estimatedTokens(heading))) {
+                chunks.append(Chunk(index: chunks.count, sections: [section.title], text: heading + part))
             }
         }
-
-        var chunks: [Chunk] = []
-        var titles: [String] = []
-        var texts: [String] = []
-        var used = 0
-
-        func flush() {
-            guard !texts.isEmpty else { return }
-            chunks.append(Chunk(index: chunks.count, sections: titles,
-                                text: texts.joined(separator: "\n\n")))
-            titles = []
-            texts = []
-            used = 0
-        }
-
-        for piece in pieces {
-            let block = "## \(piece.section)\n\n\(piece.text)"
-            let cost = Self.estimatedTokens(block)
-            if used > 0, used + cost > maxTokens { flush() }
-            if titles.last != piece.section { titles.append(piece.section) }
-            texts.append(block)
-            used += cost
-        }
-        flush()
         return chunks
     }
 

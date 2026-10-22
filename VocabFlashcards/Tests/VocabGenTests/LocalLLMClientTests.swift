@@ -191,6 +191,15 @@ struct LocalLLMClientTests {
         #expect(servers.first?.models == ["llama"])
     }
 
+    @Test func jsonTextKeepsMemberOrderAndEscapes() throws {
+        let value: JSONValue = ["z": 1, "a": [true, .null, 2.5], "q": "say \"hi\"\n\u{1}\\ 你好"]
+        #expect(value.jsonText == #"{"z":1,"a":[true,null,2.5],"q":"say \"hi\"\n\u0001\\ 你好"}"#)
+        // And it is valid JSON that reads back to the same text.
+        let parsed = try JSONSerialization.jsonObject(with: Data(value.jsonText.utf8)) as? [String: Any]
+        #expect(parsed?["q"] as? String == "say \"hi\"\n\u{1}\\ 你好")
+        #expect(value.setting("a", to: false).jsonText == #"{"z":1,"a":false,"q":"say \"hi\"\n\u0001\\ 你好"}"#)
+    }
+
     @Test func eventLinesWithoutASpaceStillParse() {
         #expect(LocalLLMClient.eventPayload("data:{\"a\":1}") == "{\"a\":1}")
         #expect(LocalLLMClient.eventPayload(": keep-alive") == nil)

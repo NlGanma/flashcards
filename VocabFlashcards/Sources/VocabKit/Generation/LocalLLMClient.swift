@@ -53,13 +53,80 @@ public struct ChatMessage: Codable, Hashable, Sendable {
 }
 
 /// Just enough JSON to write a JSON Schema for `response_format` without `[String: Any]`.
+///
+/// Objects keep their members in order, and `jsonText` writes them in that order. That is
+/// not cosmetic: llama.cpp makes the model write an object's keys in the order its schema
+/// lists them, and a model forced to write `back` before `front` answers before it knows the
+/// question — it swaps the two faces. A `Dictionary` (and so plain `JSONEncoder`) would
+/// shuffle the keys on every launch.
 public indirect enum JSONValue: Hashable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
     case null
     case array([JSONValue])
-    case object([String: JSONValue])
+    case object([Member])
+
+    public struct Member: Hashable, Sendable {
+        public let key: String
+        public let value: JSONValue
+
+        public init(_ key: String, _ value: JSONValue) {
+            self.key = key
+            self.value = value
+        }
+    }
+
+    /// The value of an object's member, or nil.
+    public subscript(key: String) -> JSONValue? {
+        guard case .object(let members) = self else { return nil }
+        return members.last { $0.key == key }?.value
+    }
+
+    /// The same object with `key` set — replaced in place if present, appended if not.
+    public func setting(_ key: String, to value: JSONValue) -> JSONValue {
+        guard case .object(var members) = self else { return self }
+        if let index = members.firstIndex(where: { $0.key == key }) {
+            members[index] = Member(key, value)
+        } else {
+            members.append(Member(key, value))
+        }
+        return .object(members)
+    }
+
+    /// Compact JSON with object members in order.
+    public var jsonText: String {
+        switch self {
+        case .string(let value): return Self.quoted(value)
+        case .number(let value):
+            if value.rounded() == value, abs(value) < 1e15 { return String(Int64(value)) }
+            return "\(value)"
+        case .bool(let value): return value ? "true" : "false"
+        case .null: return "null"
+        case .array(let values): return "[" + values.map(\.jsonText).joined(separator: ",") + "]"
+        case .object(let members):
+            return "{" + members.map { Self.quoted($0.key) + ":" + $0.value.jsonText }
+                .joined(separator: ",") + "}"
+        }
+    }
+
+    private static func quoted(_ text: String) -> String {
+        var out = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case _ where scalar.value < 0x20:
+                out += String(format: "\\u%04x", scalar.value)
+            default:
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out + "\""
+    }
 }
 
 extension JSONValue: Codable {
@@ -70,9 +137,15 @@ extension JSONValue: Codable {
         else if let value = try? container.decode(Double.self) { self = .number(value) }
         else if let value = try? container.decode(String.self) { self = .string(value) }
         else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
-        else { self = .object(try container.decode([String: JSONValue].self)) }
+        else {
+            // Decoded objects have no order to keep; sort so equal documents compare equal.
+            let members = try container.decode([String: JSONValue].self)
+            self = .object(members.sorted { $0.key < $1.key }.map { Member($0.key, $0.value) })
+        }
     }
 
+    /// Codable output for completeness. Request bodies are written with `jsonText`, which
+    /// keeps member order on every Foundation version.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
@@ -81,20 +154,24 @@ extension JSONValue: Codable {
         case .bool(let value): try container.encode(value)
         case .null: try container.encodeNil()
         case .array(let value): try container.encode(value)
-        case .object(let value): try container.encode(value)
+        case .object(let members):
+            try container.encode(Dictionary(members.map { ($0.key, $0.value) },
+                                            uniquingKeysWith: { _, last in last }))
         }
     }
 }
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
-                     ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral,
-                     ExpressibleByDictionaryLiteral {
+                     ExpressibleByFloatLiteral, ExpressibleByBooleanLiteral,
+                     ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral {
     public init(stringLiteral value: String) { self = .string(value) }
     public init(integerLiteral value: Int) { self = .number(Double(value)) }
+    public init(floatLiteral value: Double) { self = .number(value) }
     public init(booleanLiteral value: Bool) { self = .bool(value) }
     public init(arrayLiteral elements: JSONValue...) { self = .array(elements) }
+    /// Literal order is kept: `["front": …, "back": …]` writes front first.
     public init(dictionaryLiteral elements: (String, JSONValue)...) {
-        self = .object(Dictionary(elements, uniquingKeysWith: { _, last in last }))
+        self = .object(elements.map { Member($0.0, $0.1) })
     }
 }
 
@@ -105,11 +182,21 @@ public struct ChatRequest: Sendable {
     /// into a grammar, so a small model physically can't answer with malformed JSON. A
     /// server that rejects it is retried without it.
     public var schema: JSONValue?
+    /// A ceiling on the reply. Without one, a model stuck in a loop keeps writing until
+    /// its context is full, which on a laptop can take many minutes.
+    public var maxTokens: Int?
+    /// llama.cpp and LM Studio's penalty on recently repeated tokens; other servers ignore
+    /// it. Tokens a schema forces (the JSON keys) have no alternative, so only free text is
+    /// affected.
+    public var repeatPenalty: Double?
 
-    public init(messages: [ChatMessage], temperature: Double = 0.3, schema: JSONValue? = nil) {
+    public init(messages: [ChatMessage], temperature: Double = 0.3, schema: JSONValue? = nil,
+                maxTokens: Int? = nil, repeatPenalty: Double? = nil) {
         self.messages = messages
         self.temperature = temperature
         self.schema = schema
+        self.maxTokens = maxTokens
+        self.repeatPenalty = repeatPenalty
     }
 }
 
@@ -247,25 +334,26 @@ public final class LocalLLMClient: ChatStreaming, @unchecked Sendable {
     }
 
     func makeRequest(_ request: ChatRequest) throws -> URLRequest {
-        var body: [String: JSONValue] = [
-            "messages": .array(request.messages.map {
-                ["role": .string($0.role.rawValue), "content": .string($0.content)]
-            }),
-            "temperature": .number(request.temperature),
-            "stream": true
-        ]
-        if !endpoint.model.isEmpty { body["model"] = .string(endpoint.model) }
+        var body: JSONValue = [:]
+        if !endpoint.model.isEmpty { body = body.setting("model", to: .string(endpoint.model)) }
+        body = body.setting("messages", to: .array(request.messages.map {
+            ["role": .string($0.role.rawValue), "content": .string($0.content)]
+        }))
+        body = body.setting("temperature", to: .number(request.temperature))
+        body = body.setting("stream", to: true)
+        if let maxTokens = request.maxTokens { body = body.setting("max_tokens", to: .number(Double(maxTokens))) }
+        if let penalty = request.repeatPenalty { body = body.setting("repeat_penalty", to: .number(penalty)) }
         if let schema = request.schema {
-            body["response_format"] = [
+            body = body.setting("response_format", to: [
                 "type": "json_schema",
                 "json_schema": ["name": "flashcards", "strict": true, "schema": schema]
-            ]
+            ])
         }
         var urlRequest = URLRequest(url: endpoint.baseURL.appendingPathComponent("chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        urlRequest.httpBody = try JSONEncoder().encode(JSONValue.object(body))
+        urlRequest.httpBody = Data(body.jsonText.utf8)
         return urlRequest
     }
 
