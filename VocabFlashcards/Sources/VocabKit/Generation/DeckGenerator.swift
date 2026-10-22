@@ -58,14 +58,20 @@ public struct DeckGenerator: Sendable {
                         try Task.checkCancellation()
                         continuation.yield(.chunkStarted(index: chunk.index, count: chunks.count,
                                                          sections: chunk.sections))
+                        let target = Prompt.targetCardCount(chunk.text)
                         let request = ChatRequest(
                             messages: Prompt.generation(chunk: chunk, of: chunks.count,
                                                         instructions: instructions),
-                            schema: Prompt.cardSchema(sections: chunk.sections, withIDs: false))
+                            temperature: Self.temperature,
+                            schema: Prompt.cardSchema(sections: chunk.sections, withIDs: false,
+                                                      minCards: max(1, target * 2 / 3)),
+                            maxTokens: Self.tokenBudget(cards: target),
+                            repeatPenalty: Self.repeatPenalty)
                         // A small model can get stuck repeating a card; one per front is plenty.
                         var seen = Set<String>()
                         for try await card in replyCards(for: request) {
-                            guard seen.insert(TextNormalizer.normalizedKey(card.front)).inserted else { continue }
+                            guard !Self.isDegenerate(card),
+                                  seen.insert(TextNormalizer.normalizedKey(card.front)).inserted else { continue }
                             total += 1
                             continuation.yield(.card(GeneratedCard(
                                 front: card.front, back: card.back, tag: card.tag,
@@ -106,8 +112,12 @@ public struct DeckGenerator: Sendable {
                         let chat = ChatRequest(
                             messages: Prompt.revision(Array(zip(refs, batch)), request: request,
                                                       instructions: instructions, source: source),
-                            schema: Prompt.cardSchema(sections: nil, withIDs: true))
+                            temperature: Self.temperature,
+                            schema: Prompt.cardSchema(sections: nil, withIDs: true, minCards: batch.count),
+                            maxTokens: Self.tokenBudget(cards: batch.count + 1),
+                            repeatPenalty: Self.repeatPenalty)
                         for try await reply in replyCards(for: chat) {
+                            guard !Self.isDegenerate(reply) else { continue }
                             returned += 1
                             if let ref = reply.ref, let original = byRef[ref] {
                                 continuation.yield(.revised(GeneratedCard(
@@ -130,6 +140,28 @@ public struct DeckGenerator: Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    // MARK: - Guards against a looping model
+
+    // Greedy decoding is what falls into loops, so not too cold.
+    static let temperature = 0.5
+    static let repeatPenalty = 1.1
+
+    /// Room for every card at the schema's longest, plus the JSON around it.
+    static func tokenBudget(cards: Int) -> Int {
+        200 + max(1, cards) * 260
+    }
+
+    /// A card whose text has collapsed into repetition — "the fibrin, the fibrin, the
+    /// fibrin…" — is worse than no card. Real prose of any length uses mostly distinct words.
+    static func isDegenerate(_ card: ModelCard) -> Bool {
+        for text in [card.front, card.back, card.example, card.exampleNote] {
+            let words = text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            guard words.count >= 24 else { continue }
+            if Double(Set(words).count) / Double(words.count) < 0.35 { return true }
+        }
+        return false
     }
 
     // MARK: - Plumbing
@@ -166,19 +198,21 @@ public struct DeckGenerator: Sendable {
 // MARK: - Prompts
 
 /// The text the model sees. Kept short and literal: the models this runs on are small,
-/// and every rule here has to survive a 7B model's reading of it.
+/// and every rule here has to survive a 7B model's reading of it. There is deliberately no
+/// worked example — given a short section, a 7B model copies the example's cards instead.
 enum Prompt {
 
     static let generationSystem = """
         You turn a learner's study notes into flashcards.
 
-        Make one card for each distinct term, concept, fact or idea in the excerpt that is \
-        worth memorising. Skip filler, and never add facts that are not in the excerpt.
+        Make one card for every separate term, concept, fact or idea in the notes that is worth \
+        memorising — usually one card per fact. Each card tests one thing. Never copy a whole \
+        paragraph onto a card, and never add facts that are not in the notes.
 
         Fields:
         - front: what the learner recalls from: a term, a name, or a short question. Under 12 words.
         - back: what the learner should recall. Follow the learner's instructions for what goes \
-        here. With no instructions, give a concise, accurate answer in one or two sentences.
+        here. With no instructions, a concise, accurate answer in one or two sentences.
         - tag: a very short label. A part of speech (n., v., adj.) for vocabulary, otherwise a \
         one- or two-word category. "" if nothing fits.
         - example: a natural sentence that uses the front, when the instructions ask for one or \
@@ -187,92 +221,125 @@ enum Prompt {
         ask for one. Otherwise "".
         - section: the heading the card's material comes from, copied exactly from the list given.
 
-        Write in the language of the notes unless the instructions say otherwise.
-        Reply with JSON only, in the form {"cards":[{"front":"…","back":"…","tag":"…","example":"…","exampleNote":"…","section":"…"}]}.
+        Write in the language of the notes unless the instructions say otherwise. Reply with JSON \
+        only, in the form {"cards":[{"front":"…","back":"…","tag":"…","example":"…","exampleNote":"…","section":"…"}]}.
         """
 
     static let revisionSystem = """
-        You revise a learner's flashcards. Apply the learner's request to the cards you are \
-        given, and change nothing the request doesn't ask you to change.
+        You revise a learner's flashcards. Rewrite every card you are given so that it follows \
+        the learner's request; the request matters more than anything else. Change nothing the \
+        request doesn't ask you to change.
 
         Keep every card's id exactly. Keep the front unless the request is about fronts. Keep \
-        facts accurate, and consistent with the source notes when they are given. The same \
-        fields apply: front, back, tag, example, exampleNote ("" when empty).
+        facts accurate, and consistent with the notes when they are given. Fields: id, front, \
+        back, tag, example, exampleNote ("" when empty).
 
         Return every card you were given, in the same order. Add a card with a new id only if \
-        the request asks for more cards.
-        Reply with JSON only, in the form {"cards":[{"id":"c1","front":"…","back":"…","tag":"…","example":"…","exampleNote":"…"}]}.
+        the request asks for more cards. Reply with JSON only, in the form \
+        {"cards":[{"id":"c1","front":"…","back":"…","tag":"…","example":"…","exampleNote":"…"}]}.
         """
 
+    /// The learner's standing instructions, last in the prompt: small models weight the
+    /// end of a prompt most, and these are what the learner actually cares about.
     static func instructionBlock(_ instructions: [String]) -> String {
         let cleaned = instructions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty else { return "The learner's instructions: none, so use the defaults." }
+        guard !cleaned.isEmpty else { return "The learner gave no instructions, so use the defaults." }
         let list = cleaned.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        return "The learner's instructions for every card (when they conflict, the later one wins):\n\(list)"
+        return "The learner's instructions for every card (when two conflict, the later one wins):\n\(list)"
     }
 
     static func generation(chunk: MarkdownOutline.Chunk, of count: Int,
                            instructions: [String]) -> [ChatMessage] {
         let sections = chunk.sections.map { "\"\($0)\"" }.joined(separator: ", ")
-        let part = count > 1 ? " (part \(chunk.index + 1) of \(count))" : ""
+        let part = count > 1 ? " This is part \(chunk.index + 1) of \(count) of the notes." : ""
+        let target = targetCardCount(chunk.text)
         return [
             ChatMessage(.system, generationSystem),
             ChatMessage(.user, """
-                \(instructionBlock(instructions))
-
-                Sections in this excerpt: \(sections)
-
-                Notes\(part):
-                <<<
+                <notes>
                 \(chunk.text)
-                >>>
+                </notes>
+
+                Sections: \(sections).\(part)
+                Make about \(target) card\(target == 1 ? "" : "s"), one per fact.
+
+                \(instructionBlock(instructions))
                 """)
         ]
     }
 
     static func revision(_ cards: [(ref: String, card: GeneratedCard)], request: String,
                          instructions: [String], source: String?) -> [ChatMessage] {
-        let list = cards.map { ref, card -> JSONValue in
-            ["id": .string(ref), "front": .string(card.front), "back": .string(card.back),
-             "tag": .string(card.tag), "example": .string(card.example),
-             "exampleNote": .string(card.exampleNote)]
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let json = (try? encoder.encode(JSONValue.array(list))).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        var body = "\(instructionBlock(instructions))\n\nThe request: \(request)\n\n"
+        // One card per line, keys in the order the reply must use.
+        let json = "[\n" + cards.map { ref, card -> String in
+            let value: JSONValue = [
+                "id": .string(ref), "front": .string(card.front), "back": .string(card.back),
+                "tag": .string(card.tag), "example": .string(card.example),
+                "exampleNote": .string(card.exampleNote)
+            ]
+            return value.jsonText
+        }.joined(separator: ",\n") + "\n]"
+        // The request goes first and last. Given only the cards and then the request, a
+        // small model tends to copy the cards back unchanged.
+        var body = "The request: \(request)\n\n"
         if let source, !source.isEmpty {
-            body += "Source notes:\n<<<\n\(source)\n>>>\n\n"
+            body += "<notes>\n\(source)\n</notes>\n\n"
         }
-        body += "Cards:\n\(json)"
+        body += "<cards>\n\(json)\n</cards>\n\n\(instructionBlock(instructions))\n\n"
+        let scope = cards.count == 1 ? "the card above" : "each of the \(cards.count) cards above"
+        body += "Rewrite \(scope) so that it follows the request: \(request)"
         return [ChatMessage(.system, revisionSystem), ChatMessage(.user, body)]
+    }
+
+    /// Roughly one card per fact: sentences and list items in the notes, headings and code
+    /// left out. Small models stop after one or two cards unless they are given a number,
+    /// and with a schema the lower bound is enforced.
+    static func targetCardCount(_ text: String) -> Int {
+        var units = 0
+        var inFence = false
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { inFence.toggle(); continue }
+            if inFence || trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let sentences = trimmed.components(separatedBy: CharacterSet(charactersIn: ".!?。！？；;"))
+                .filter { $0.unicodeScalars.filter(CharacterSet.letters.contains).count >= 2 }
+            units += max(1, sentences.count)
+        }
+        return min(30, max(1, units))
     }
 
     /// Grammar-constrained servers enforce this exactly; `strict` requires every field, so
     /// the model writes "" for the ones it leaves empty. A revision carries ids instead of
-    /// sections, since a card keeps its section. The cap stops a small model that has
-    /// fallen into a loop from writing cards until its context is full.
-    static func cardSchema(sections: [String]?, withIDs: Bool) -> JSONValue {
-        var properties: [String: JSONValue] = [
-            "front": ["type": "string"], "back": ["type": "string"], "tag": ["type": "string"],
-            "example": ["type": "string"], "exampleNote": ["type": "string"]
-        ]
-        var required: [JSONValue] = ["front", "back", "tag", "example", "exampleNote"]
-        if withIDs {
-            properties["id"] = ["type": "string"]
-            required.insert("id", at: 0)
+    /// sections, since a card keeps its section. The floor keeps a small model from stopping
+    /// after one card. The caps — on cards, and on every field's length — stop one that
+    /// has fallen into a loop from writing until its context is full.
+    static func cardSchema(sections: [String]?, withIDs: Bool, minCards: Int = 1) -> JSONValue {
+        func text(_ limit: Int) -> JSONValue { ["type": "string", "maxLength": .number(Double(limit))] }
+        // The model writes keys in exactly this order: the front before the back it answers.
+        var properties: [JSONValue.Member] = []
+        var required: [JSONValue] = []
+        func field(_ name: String, _ schema: JSONValue) {
+            properties.append(JSONValue.Member(name, schema))
+            required.append(.string(name))
         }
+        if withIDs { field("id", text(8)) }
+        // An empty face is the easy way out for a small model asked to rewrite something.
+        field("front", ["type": "string", "minLength": 1, "maxLength": 120])
+        field("back", ["type": "string", "minLength": 1, "maxLength": 500])
+        field("tag", text(24))
+        field("example", text(240))
+        field("exampleNote", text(240))
         if let sections, !sections.isEmpty {
-            properties["section"] = ["type": "string", "enum": .array(sections.map { .string($0) })]
-            required.append("section")
+            field("section", ["type": "string", "enum": .array(sections.map { .string($0) })])
         }
         return [
             "type": "object",
             "properties": [
                 "cards": [
                     "type": "array",
-                    "maxItems": 40,
+                    "minItems": .number(Double(max(1, minCards))),
+                    "maxItems": .number(Double(max(40, minCards))),
                     "items": [
                         "type": "object",
                         "properties": .object(properties),

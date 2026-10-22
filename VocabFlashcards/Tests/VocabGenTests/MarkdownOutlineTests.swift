@@ -101,12 +101,12 @@ struct MarkdownOutlineTests {
         #expect(outline.sections.map(\.title) == ["Examples", "Examples (2)"])
     }
 
-    @Test func smallSectionsShareAChunk() {
+    @Test func everySectionIsItsOwnChunk() {
         let outline = MarkdownOutline(markdown: "## A\none\n## B\ntwo\n## C\nthree", fallbackTitle: "f")
         let chunks = outline.chunks(maxTokens: 1500)
-        #expect(chunks.count == 1)
-        #expect(chunks[0].sections == ["A", "B", "C"])
-        #expect(chunks[0].text == "## A\n\none\n\n## B\n\ntwo\n\n## C\n\nthree")
+        #expect(chunks.map(\.sections) == [["A"], ["B"], ["C"]])
+        #expect(chunks.map(\.index) == [0, 1, 2])
+        #expect(chunks[1].text == "## B\n\ntwo")
     }
 
     @Test func aLongSectionSplitsBetweenParagraphsAndKeepsItsHeading() {

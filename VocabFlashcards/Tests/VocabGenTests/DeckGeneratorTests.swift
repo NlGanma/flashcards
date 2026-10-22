@@ -46,37 +46,87 @@ struct DeckGeneratorTests {
                                 fallbackTitle: "bio")
 
     @Test func cardsAreTaggedWithTheirSection() async throws {
-        let model = ScriptedModel([#"""
-            {"cards":[{"front":"mitochondria","back":"Make ATP.","tag":"organelle","example":"","exampleNote":"","section":"Cells"},
-                      {"front":"DNA","back":"Stores genes.","tag":"molecule","example":"","exampleNote":"","section":"genes"}]}
-            """#])
+        let model = ScriptedModel([
+            #"{"cards":[{"front":"mitochondria","back":"Make ATP.","tag":"organelle","example":"","exampleNote":"","section":"Genes"}]}"#,
+            #"{"cards":[{"front":"DNA","back":"Stores genes.","tag":"molecule","example":"","exampleNote":""}]}"#
+        ])
         let events = try await run(DeckGenerator(client: model).generate(from: notes, instructions: []))
 
-        #expect(events.first == .chunkStarted(index: 0, count: 1, sections: ["Cells", "Genes"]))
+        #expect(events.first == .chunkStarted(index: 0, count: 2, sections: ["Cells"]))
         #expect(cards(events).map(\.front) == ["mitochondria", "DNA"])
-        // A paraphrased section still lands in the right set.
+        // The section comes from the request, not from what the model claims.
         #expect(cards(events).map(\.section) == ["Cells", "Genes"])
     }
 
     @Test func theChatInstructionsReachThePromptInOrder() async throws {
-        let model = ScriptedModel([#"[{"front":"a","back":"b"}]"#])
+        let model = ScriptedModel([#"[{"front":"a","back":"b"}]"#, #"[{"front":"c","back":"d"}]"#])
         _ = try await run(DeckGenerator(client: model).generate(
             from: notes, instructions: ["Put the Chinese translation on the back", "  ", "Add an example sentence"]))
 
         let prompt = try #require(model.requests.first?.messages.last?.content)
         #expect(prompt.contains("1. Put the Chinese translation on the back\n2. Add an example sentence"))
         #expect(prompt.contains("Mitochondria make ATP."))
-        #expect(prompt.contains(#"Sections in this excerpt: "Cells", "Genes""#))
+        #expect(prompt.contains(#"Sections: "Cells"."#))
+        #expect(prompt.contains("<notes>\n## Cells"))
+        // The learner's instructions come last, where a small model weights them most.
+        #expect(prompt.hasSuffix("2. Add an example sentence"))
         #expect(model.requests.first?.messages.first?.role == .system)
     }
 
     @Test func theSchemaPinsSectionsToTheChunk() throws {
-        let schema = Prompt.cardSchema(sections: ["Cells", "Genes"], withIDs: false)
-        let data = try JSONEncoder().encode(schema)
-        let text = String(data: data, encoding: .utf8)!
+        let text = Prompt.cardSchema(sections: ["Cells", "Genes"], withIDs: false).jsonText
         #expect(text.contains(#""enum":["Cells","Genes"]"#))
         #expect(text.contains(#""maxItems":40"#))
         #expect(!text.contains(#""id""#))
+    }
+
+    @Test func theCardTargetCountsFactsNotHeadingsOrCode() throws {
+        #expect(Prompt.targetCardCount("## Cells\nMitochondria make ATP. Ribosomes build proteins.\n- the nucleus") == 3)
+        #expect(Prompt.targetCardCount("```\nlet a = 1; let b = 2\n```\nOne fact.") == 1)
+        #expect(Prompt.targetCardCount("线粒体产生能量。核糖体合成蛋白质。") == 2)
+        #expect(Prompt.targetCardCount(String(repeating: "A fact. ", count: 100)) == 30)
+
+        let schema = Prompt.cardSchema(sections: nil, withIDs: true, minCards: 3).jsonText
+        #expect(schema.contains(#""minItems":3"#))
+    }
+
+    @Test func aCardThatCollapsedIntoRepetitionIsDropped() async throws {
+        let loop = Array(repeating: "the fibrin filaments,", count: 20).joined(separator: " ")
+        let model = ScriptedModel([#"[{"front":"ER","back":"\#(loop)"},{"front":"ATP","back":"The energy currency of the cell."}]"#, "[]"])
+        let events = try await run(DeckGenerator(client: model).generate(from: notes, instructions: []))
+        #expect(cards(events).map(\.front) == ["ATP"])
+
+        let prose = ModelCard(front: "osmosis", back: """
+            Osmosis is the net movement of water molecules through a selectively permeable membrane \
+            from a region of lower solute concentration to a region of higher solute concentration, \
+            which equalises the concentrations on both sides.
+            """)
+        #expect(!DeckGenerator.isDegenerate(prose))
+    }
+
+    @Test func requestsCarryLengthCapsAndATokenBudget() async throws {
+        let model = ScriptedModel([#"[{"front":"a","back":"b"}]"#, "[]"])
+        _ = try await run(DeckGenerator(client: model).generate(from: notes, instructions: []))
+        let request = try #require(model.requests.first)
+        #expect(request.maxTokens == DeckGenerator.tokenBudget(cards: Prompt.targetCardCount("Mitochondria make ATP.")))
+        #expect(request.repeatPenalty == 1.1)
+        let schema = try #require(request.schema).jsonText
+        #expect(schema.contains(#""back":{"type":"string","minLength":1,"maxLength":500}"#))
+    }
+
+    /// llama.cpp writes keys in schema order; a model made to write the back first swaps the faces.
+    @Test func theSchemaAsksForTheFrontBeforeTheBack() throws {
+        let schema = Prompt.cardSchema(sections: ["Cells"], withIDs: true)
+        let item = try #require(schema["properties"]?["cards"]?["items"])
+        guard case .object(let fields)? = item["properties"] else { Issue.record("no properties"); return }
+        #expect(fields.map(\.key) == ["id", "front", "back", "tag", "example", "exampleNote", "section"])
+        #expect(item["required"] == .array(["id", "front", "back", "tag", "example", "exampleNote", "section"]))
+    }
+
+    @Test func revisionCardsAreListedFrontFirst() {
+        let prompt = Prompt.revision([("c1", GeneratedCard(front: "f", back: "b"))], request: "r",
+                                     instructions: [], source: nil).last!.content
+        #expect(prompt.contains(#"{"id":"c1","front":"f","back":"b","tag":"","example":"","exampleNote":""}"#))
     }
 
     @Test func eachChunkIsItsOwnRequest() async throws {
@@ -95,13 +145,13 @@ struct DeckGeneratorTests {
     }
 
     @Test func aLoopingModelsRepeatsAreDropped() async throws {
-        let model = ScriptedModel([#"[{"front":"ATP","back":"x"},{"front":"atp","back":"y"},{"front":"ADP","back":"z"}]"#])
+        let model = ScriptedModel([#"[{"front":"ATP","back":"x"},{"front":"atp","back":"y"},{"front":"ADP","back":"z"}]"#, "[]"])
         let events = try await run(DeckGenerator(client: model).generate(from: notes, instructions: []))
         #expect(cards(events).map(\.front) == ["ATP", "ADP"])
     }
 
     @Test func aReplyWithNoCardsIsAnError() async throws {
-        let model = ScriptedModel(["I can't help with that."])
+        let model = ScriptedModel(["I can't help with that.", "Nor that."])
         await #expect(throws: GenerationError.noCards) {
             try await run(DeckGenerator(client: model).generate(from: notes, instructions: []))
         }
@@ -146,7 +196,8 @@ struct DeckGeneratorTests {
         #expect(revised.map(\.section) == ["Energy", "Cells"])
 
         let prompt = try #require(model.requests.first?.messages.last?.content)
-        #expect(prompt.contains("The request: Translate the backs into Chinese"))
+        #expect(prompt.hasPrefix("The request: Translate the backs into Chinese"))
+        #expect(prompt.hasSuffix("Rewrite each of the 2 cards above so that it follows the request: Translate the backs into Chinese"))
         #expect(prompt.contains(#""id":"c1""#) && prompt.contains("1. Keep it short"))
     }
 
@@ -171,6 +222,6 @@ struct DeckGeneratorTests {
         _ = try await run(DeckGenerator(client: model).revise([GeneratedCard(front: "a", back: "b")],
                                                               request: "more detail", instructions: [],
                                                               source: "The original paragraph."))
-        #expect(model.requests.first?.messages.last?.content.contains("<<<\nThe original paragraph.\n>>>") == true)
+        #expect(model.requests.first?.messages.last?.content.contains("<notes>\nThe original paragraph.\n</notes>") == true)
     }
 }
