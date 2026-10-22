@@ -42,6 +42,12 @@ let package = Package(
         .testTarget(
             name: "VocabFlashcardsTests",
             dependencies: ["VocabFlashcards", "VocabKit"]
+        ),
+        // Card generation from Markdown with a local model. Written with Swift Testing,
+        // which (unlike XCTest) ships with the Command Line Tools.
+        .testTarget(
+            name: "VocabGenTests",
+            dependencies: ["VocabKit"]
         )
     ]
 )
