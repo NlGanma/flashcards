@@ -3,7 +3,7 @@ import Foundation
 /// User-facing, friendly errors. Every failure path in the app maps to one of these
 /// so the UI can show a clear message instead of crashing or showing a raw error.
 public enum VocabError: LocalizedError, Equatable {
-    /// The chosen file is not an .xlsx workbook.
+    /// The chosen file is not a kind the app opens.
     case notXLSX(fileName: String)
     /// The file can no longer be opened (moved, deleted, or permission lost).
     case cannotAccess(fileName: String)
@@ -17,7 +17,7 @@ public enum VocabError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .notXLSX(let name):
-            return "“\(name)” isn't an Excel file."
+            return "“\(name)” isn't a file Vocab Flashcards can open."
         case .cannotAccess(let name):
             return "Can't open “\(name)”."
         case .unreadable(let name):
@@ -32,7 +32,7 @@ public enum VocabError: LocalizedError, Equatable {
     public var recoverySuggestion: String? {
         switch self {
         case .notXLSX:
-            return "Please choose a file that ends in .xlsx."
+            return "Choose an Excel workbook (.xlsx) or a saved deck (.vfdeck)."
         case .cannotAccess:
             return "It may have been moved or deleted. Try uploading it again."
         case .unreadable:
