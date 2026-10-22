@@ -48,6 +48,14 @@ public enum TextNormalizer {
         return set
     }()
 
+    /// Bracket pairs whose closing half must survive edge-trimming when its opener is
+    /// still in the word — otherwise "histrionic (histrionics)" is displayed as
+    /// "histrionic (histrionics".
+    private static let bracketPairs: [Character: Character] = [
+        "(": ")", "（": "）", "[": "]", "【": "】",
+        "「": "」", "《": "》", "〈": "〉"
+    ]
+
     /// Clean an English word / phrase: normalize whitespace, then peel off wrapping
     /// punctuation. Internal characters (hyphens in "well-being", apostrophes in "it's")
     /// are left untouched because trimming only affects the ends.
@@ -55,7 +63,34 @@ public enum TextNormalizer {
         let normalized = normalizeWhitespace(raw)
         let trimmed = normalized.trimmingCharacters(in: wordEdgeTrim)
         // A second normalize pass in case edge-trimming exposed new whitespace.
-        return normalizeWhitespace(trimmed)
+        return normalizeWhitespace(restoringBracketBalance(trimmed, from: normalized))
+    }
+
+    /// Edge-trimming is meant to peel list markers and wrapping quotes, not to break a
+    /// parenthetical that belongs to the word. If trimming left an opener without its
+    /// partner, put back as much of the original tail as it takes to close it.
+    private static func restoringBracketBalance(_ trimmed: String, from original: String) -> String {
+        guard let unmatched = firstUnmatchedOpener(in: trimmed),
+              let closer = bracketPairs[unmatched],
+              let span = original.range(of: trimmed),
+              let closingIndex = original[span.upperBound...].firstIndex(of: closer)
+        else { return trimmed }
+        // Extend the trimmed span rightwards only — whatever was peeled off the front
+        // (bullets, list dashes) stays peeled.
+        return String(original[span.lowerBound...closingIndex])
+    }
+
+    /// The opening bracket that has no matching closer, if any.
+    private static func firstUnmatchedOpener(in text: String) -> Character? {
+        var stack: [Character] = []
+        for character in text {
+            if bracketPairs[character] != nil {
+                stack.append(character)
+            } else if let openerIndex = stack.lastIndex(where: { bracketPairs[$0] == character }) {
+                stack.removeSubrange(openerIndex...)
+            }
+        }
+        return stack.first
     }
 
     /// Clean a part-of-speech token. Keeps conventional trailing dots ("n.", "adj.")
@@ -73,7 +108,13 @@ public enum TextNormalizer {
     /// The normalized identity used for known-word memory and for merging duplicate
     /// cards. Case-insensitive and whitespace-insensitive, based on the English word only.
     /// "Keen", "keen ", and " KEEN" all map to the same key.
+    ///
+    /// Deliberately *not* built on `cleanWord`: the key is a persisted identity, so it has
+    /// to stay byte-stable. Restoring a trimmed bracket improves what the user reads, but
+    /// changing it here would re-key every already-learned word whose source text had a
+    /// parenthetical, silently returning it to the new pile.
     public static func normalizedKey(_ english: String) -> String {
-        cleanWord(english).lowercased()
+        normalizeWhitespace(normalizeWhitespace(english).trimmingCharacters(in: wordEdgeTrim))
+            .lowercased()
     }
 }

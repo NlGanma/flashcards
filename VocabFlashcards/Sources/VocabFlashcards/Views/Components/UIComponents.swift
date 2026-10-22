@@ -7,16 +7,26 @@ import UniformTypeIdentifiers
 struct FilledButtonStyle: ButtonStyle {
     var gradient: LinearGradient = Palette.accentGradient
     var glow: Color = Palette.indigo
+    /// A filled button that ignores `.disabled()` looks fully live and just swallows
+    /// clicks, which is worse than no affordance at all — so the style reads it directly.
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var scheme
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.rounded(15, .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(isEnabled ? AnyShapeStyle(.white)
+                                       : AnyShapeStyle(Color.secondaryText(scheme)))
             .padding(.vertical, 12)
             .padding(.horizontal, 24)
-            .background(Capsule().fill(gradient))
-            .shadow(color: glow.opacity(configuration.isPressed ? 0.15 : 0.35),
+            .background(
+                Capsule().fill(isEnabled
+                               ? AnyShapeStyle(gradient)
+                               : AnyShapeStyle(Color.primary.opacity(scheme == .dark ? 0.12 : 0.07)))
+            )
+            .shadow(color: isEnabled ? glow.opacity(configuration.isPressed ? 0.15 : 0.35) : .clear,
                     radius: configuration.isPressed ? 5 : 12, y: 6)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .scaleEffect(configuration.isPressed && isEnabled ? 0.96 : 1)
             .animation(Motion.quick, value: configuration.isPressed)
             .contentShape(Capsule())
     }

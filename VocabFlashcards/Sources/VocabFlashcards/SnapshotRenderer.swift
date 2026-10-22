@@ -11,6 +11,23 @@ enum SnapshotConfig {
     static let skipIntro = ProcessInfo.processInfo.environment["VF_SNAPSHOT"] != nil
 }
 
+/// A `ScrollView` that lays its content out plainly while rendering snapshots.
+///
+/// `ImageRenderer` rasterizes a `ScrollView`'s chrome but not its content, so any screen
+/// with a scrollable body would otherwise photograph as an empty box — which makes the
+/// snapshots useless exactly where the layout is hardest to get right.
+struct SnapshotableScrollView<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if SnapshotConfig.skipIntro {
+            content()
+        } else {
+            ScrollView { content() }
+        }
+    }
+}
+
 @MainActor
 enum SnapshotRenderer {
 
@@ -156,6 +173,82 @@ enum SnapshotRenderer {
              size: CGSize(width: Metric.cardMaxWidth + 80, height: Metric.cardHeight + 80),
              name: "48_aside_flash_dark", dir: dir, dark: true)
 
+        // The example panel: on its own, and open beside a card at full and minimum width.
+        for (card, name) in [(exampleCard, "70_panel_single"), (multiExampleCard, "71_panel_multi"),
+                             (fourGlossCard, "71b_panel_four_glosses")] {
+            for dark in [false, true] {
+                save(ZStack {
+                        AppBackground()
+                        SentencePanelView(card: card).frame(width: 352, height: Metric.cardHeight)
+                     },
+                     size: CGSize(width: 412, height: Metric.cardHeight + 60),
+                     name: "\(name)\(dark ? "_dark" : "")", dir: dir, dark: dark)
+            }
+        }
+
+        // Study the new words, so the card on screen carries a real curated example
+        // straight out of the bundled bank rather than a hand-made one.
+        let panelApp = makeApp(known: known)
+        panelApp.loadFile(at: sampleURL, remember: false)
+        panelApp.startStudy(filter: .excludeKnown)
+        // The snapshot's known-word store is a stub, so the shuffled deck can land on a
+        // word the curated bank doesn't cover. Pin it to one that it does.
+        if let current = panelApp.session?.currentCard,
+           let curated = panelApp.curatedCard(for: "keen") {
+            panelApp.session?.replaceCard(current.with(word: curated.word, senses: curated.senses))
+        }
+        panelApp.session?.showBack()
+        panelApp.session?.isShowingSentence = true
+        save(RootView().environmentObject(panelApp), size: full, name: "72_study_panel", dir: dir)
+        save(RootView().environmentObject(panelApp), size: full, name: "73_study_panel_dark",
+             dir: dir, dark: true)
+        save(RootView().environmentObject(panelApp), size: CGSize(width: 880, height: 640),
+             name: "74_study_panel_min", dir: dir)
+        // A three-sense card is the tallest thing the panel has to hold. Identity has to
+        // stay the current card's, or `replaceCard` swaps some other card in the deck.
+        if let current = panelApp.session?.currentCard {
+            panelApp.session?.replaceCard(current.with(word: multiExampleCard.word,
+                                                       senses: multiExampleCard.senses))
+        }
+        save(RootView().environmentObject(panelApp), size: full, name: "75_study_panel_multi_dark",
+             dir: dir, dark: true)
+
+        // A word the curated bank doesn't cover: the panel must say so once, not reprint
+        // the card's definitions with a placeholder under each.
+        let bare = Flashcard(id: "suppress", word: "suppress",
+                             senses: [Sense(partOfSpeech: "v.", definition: "镇压，压制，隐瞒，查禁")],
+                             sourceSets: ["Practice 6"])
+        for dark in [false, true] {
+            save(ZStack {
+                    AppBackground()
+                    SentencePanelView(card: bare).frame(width: 352, height: Metric.cardHeight)
+                 },
+                 size: CGSize(width: 412, height: Metric.cardHeight + 60),
+                 name: "78_panel_no_example\(dark ? "_dark" : "")", dir: dir, dark: dark)
+        }
+
+        // The editor.
+        let editorApp = makeApp(known: known)
+        editorApp.loadFile(at: sampleURL, remember: false)
+        editorApp.editingCard = exampleCard
+        save(CardEditorView(card: exampleCard).environmentObject(editorApp),
+             size: CGSize(width: 580, height: 620), name: "76_editor", dir: dir)
+        save(CardEditorView(card: multiExampleCard).environmentObject(editorApp),
+             size: CGSize(width: 580, height: 620), name: "77_editor_multi_dark", dir: dir, dark: true)
+
+        // A block holding a sentence with no meaning to attach it to: this used to be
+        // dropped silently on Save, and now blocks it with a reason instead.
+        let orphaned = Flashcard(
+            id: "capricious", word: "capricious",
+            senses: [Sense(partOfSpeech: "adj.", definition: "反复无常的，任性的",
+                           examples: exampleCard.senses[0].examples),
+                     Sense(partOfSpeech: "", definition: "",
+                           example: Example(english: "A sentence typed with no meaning to attach it to.",
+                                            chinese: "一个还没有释义可以依附的句子。"))],
+            sourceSets: ["Practice 1"])
+        save(CardEditorView(card: orphaned).environmentObject(editorApp),
+             size: CGSize(width: 580, height: 760), name: "79_editor_blocked", dir: dir)
+
         app.errorMessage = "That file couldn't be read. Your current round is still here."
         save(RootView().environmentObject(app), size: full,
              name: "46_study_error_dark", dir: dir, dark: true)
@@ -227,8 +320,62 @@ enum SnapshotRenderer {
 
     private static func makeApp(known: KnownWordsStore) -> AppState {
         let defaults = UserDefaults(suiteName: "vf-snapshot-\(UUID().uuidString)")!
-        return AppState(knownStore: known, recentStore: RecentFileStore(defaults: defaults))
+        // A throwaway edits store — snapshots must never read or write the real one.
+        let edits = CardEditsStore(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("vf-snap-edits-\(UUID().uuidString)"))
+        return AppState(knownStore: known, recentStore: RecentFileStore(defaults: defaults),
+                        editsStore: edits)
     }
+
+    /// A card carrying worked examples, for the panel screens. Two glosses, two sentences.
+    private static let exampleCard = Flashcard(
+        id: "capricious", word: "capricious",
+        senses: [Sense(partOfSpeech: "adj.", definition: "反复无常的，任性的", examples: [
+            Example(gloss: "反复无常的",
+                    english: "The committee's capricious funding decisions left researchers unable to plan beyond a single semester.",
+                    chinese: "委员会反复无常的拨款决定，使研究人员无法为一个学期以后做任何规划。"),
+            Example(gloss: "任性的",
+                    english: "A capricious heir can undo in a decade what three generations spent a century assembling.",
+                    chinese: "一个任性的继承人，十年之内就能毁掉三代人用一个世纪积攒的家业。")])],
+        sourceSets: ["Practice 1"])
+
+    /// The case the user asked about: one row, one part of speech pair, four glosses.
+    private static let fourGlossCard = Flashcard(
+        id: "miscreant", word: "miscreant",
+        senses: [Sense(partOfSpeech: "n. / adj.", definition: "恶棍，歹徒；不法的，邪恶的", examples: [
+            Example(gloss: "恶棍",
+                    english: "The night watchman's log named three miscreants who had scaled the fence after curfew.",
+                    chinese: "守夜人的记录点名了三个在宵禁后翻越围栏的恶棍。"),
+            Example(gloss: "歹徒",
+                    english: "Witnesses described the miscreant as unhurried, as though he had rehearsed the escape.",
+                    chinese: "目击者形容这名歹徒不慌不忙，仿佛早已演练过逃脱的路线。"),
+            Example(gloss: "不法的",
+                    english: "The charter was drafted to curb the miscreant practices that had bankrupted two earlier banks.",
+                    chinese: "这份章程的起草，是为了遏制曾让两家银行破产的不法的行径。"),
+            Example(gloss: "邪恶的",
+                    english: "History remembers him less for his talent than for the miscreant uses he put it to.",
+                    chinese: "历史记住他，与其说是因为才能，不如说是因为他把才能用在了邪恶的地方。")])],
+        sourceSets: ["Practice 15"])
+
+    private static let multiExampleCard = Flashcard(
+        id: "keen", word: "keen",
+        senses: [Sense(partOfSpeech: "adj.", definition: "敏锐的", examples: [
+                    Example(gloss: "敏锐的",
+                            english: "Her keen eye for inconsistency exposed the flaw that three earlier reviewers had missed.",
+                            chinese: "她对矛盾之处敏锐的眼光，揭露了此前三位审稿人都忽略的缺陷。")]),
+                 Sense(partOfSpeech: "adj.", definition: "渴望的，热切的", examples: [
+                    Example(gloss: "渴望的",
+                            english: "Though keen to publish, the historian withheld the manuscript until the archive could be verified.",
+                            chinese: "尽管渴望的心情迫切，这位历史学家仍压下书稿，直到档案得到核实。"),
+                    Example(gloss: "热切的",
+                            english: "A keen interest in provincial records led her to an archive no one had catalogued.",
+                            chinese: "对地方档案热切的兴趣，把她引向了一批从未有人编目的卷宗。")]),
+                 Sense(partOfSpeech: "n.", definition: "挽歌（爱尔兰）", examples: [
+                    Example(gloss: "挽歌（爱尔兰）",
+                            english: "The keen rising from the far end of the village announced the death before any messenger arrived.",
+                            chinese: "从村子另一头传来的挽歌，比任何报信人都更早宣告了这场死亡。")])],
+        sourceSets: ["Practice 1", "Practice 2"])
 
     private static func save<V: View>(_ view: V, size: CGSize, name: String, dir: URL, dark: Bool = false) {
         let content = view

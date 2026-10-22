@@ -186,6 +186,25 @@ public final class KnownWordsStore: ObservableObject {
         persist()
     }
 
+    /// Refresh the stored display forms from the words as they read today. Keys are the
+    /// identity and never change here — this only repairs how an already-learned word is
+    /// spelled in the manager, e.g. one saved before bracket-balanced cleaning existed.
+    /// Writes nothing when everything already matches.
+    public func reconcileDisplays(_ displays: [String: String]) {
+        var changed = false
+        for (key, display) in displays where !display.isEmpty {
+            if let current = entries[key], current != display {
+                entries[key] = display
+                changed = true
+            }
+            if let current = asideEntries[key], current != display {
+                asideEntries[key] = display
+                changed = true
+            }
+        }
+        if changed { persist() }
+    }
+
     // MARK: - Persistence
 
     private static func load(from url: URL) -> LoadResult {

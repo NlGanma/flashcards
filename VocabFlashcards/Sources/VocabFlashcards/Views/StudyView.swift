@@ -8,14 +8,22 @@ enum StudyControlFocus: Hashable {
 
 struct StudyView: View {
     @EnvironmentObject private var app: AppState
+    /// Leaving study clears `session` in the same transaction as the route, but this view
+    /// keeps rendering for the whole cross-fade — without holding on to the session the
+    /// card would blank out on its way off screen.
+    @State private var shown: StudySession?
 
     var body: some View {
         Group {
-            if let session = app.session {
+            if let session = app.session ?? shown {
                 StudyContent(session: session)
             } else {
                 Color.clear
             }
+        }
+        .onAppear { shown = app.session }
+        .onChange(of: app.session.map(ObjectIdentifier.init)) { _ in
+            if let latest = app.session { shown = latest }
         }
     }
 }
@@ -29,20 +37,23 @@ private struct StudyContent: View {
     @FocusState private var focusedControl: StudyControlFocus?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 30)
+                    .padding(.top, 26)
+
+                Spacer(minLength: 12)
+
+                VStack(spacing: 16) {
+                    cardArea(height: stageHeight(in: geo.size.height))
+                    controls
+                }
                 .padding(.horizontal, 30)
-                .padding(.top, 26)
 
-            Spacer(minLength: 12)
-
-            VStack(spacing: 16) {
-                cardArea
-                controls
+                Spacer(minLength: 12)
             }
-            .padding(.horizontal, 30)
-
-            Spacer(minLength: 12)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: installKeyMonitor)
@@ -120,30 +131,93 @@ private struct StudyContent: View {
 
     // MARK: - Card
 
-    private var cardArea: some View {
-        ZStack {
-            if let card = session.currentCard {
-                FlashcardView(
-                    card: card,
-                    isShowingBack: session.isShowingBack,
-                    isKnownFlash: app.lastMarkedKnownID == card.key,
-                    isAsideFlash: app.lastMarkedAsideID == card.key,
-                    isCurrentKnown: session.isCurrentKnown,
-                    isCurrentAside: session.isCurrentAside,
-                    onFlip: app.flip,
-                    onMarkKnown: app.markKnownAndAdvance,
-                    onUnmarkKnown: app.unmarkCurrentKnown,
-                    onMarkAside: app.markAsideAndAdvance,
-                    onUnmarkAside: app.unmarkCurrentAside,
-                    actionFocus: $focusedControl
-                )
-                .id(card.key)
-                .transition(cardTransition)
-                .hoverCursor($cardHovering)
+    /// The card is centered on its own; when the example panel opens the card shifts left
+    /// by an offset instead of being re-laid-out, so the pair reads as one unit sliding
+    /// over while the card keeps its slot in the layout for the next/previous transition.
+    /// How tall the card/panel stage is. The card itself is always `Metric.cardHeight`;
+    /// the extra goes to the example panel, which routinely has three or four meanings to
+    /// show and can use every point of it. The stage is sized the same whether the panel
+    /// is open or not, so opening it never nudges the card or the arrows.
+    private func stageHeight(in windowHeight: CGFloat) -> CGFloat {
+        // ~264pt is the progress header, the arrow row and the padding around them. The
+        // cap keeps the panel from towering over the card it belongs to on a tall display.
+        min(520, max(Metric.cardHeight, windowHeight - 264))
+    }
+
+    private func cardArea(height stage: CGFloat) -> some View {
+        GeometryReader { geo in
+            let layout = SplitLayout(available: geo.size.width, showingPanel: panelVisible)
+            ZStack {
+                if let card = session.currentCard {
+                    FlashcardView(
+                        card: card,
+                        isShowingBack: session.isShowingBack,
+                        isKnownFlash: app.lastMarkedKnownID == card.key,
+                        isAsideFlash: app.lastMarkedAsideID == card.key,
+                        isCurrentKnown: session.isCurrentKnown,
+                        isCurrentAside: session.isCurrentAside,
+                        isShowingSentence: panelVisible,
+                        // Two thresholds, not one cliff: dropping the key hints alone frees
+                        // far more width than opening the panel costs, so the primary
+                        // action keeps its full label until the card is genuinely narrow.
+                        showsKeyCaps: layout.cardWidth >= 530,
+                        usesShortLabels: layout.cardWidth < 470,
+                        onFlip: app.flip,
+                        onToggleExamples: app.toggleSentence,
+                        onEdit: app.beginEditingCurrentCard,
+                        onMarkKnown: app.markKnownAndAdvance,
+                        onUnmarkKnown: app.unmarkCurrentKnown,
+                        onMarkAside: app.markAsideAndAdvance,
+                        onUnmarkAside: app.unmarkCurrentAside,
+                        actionFocus: $focusedControl
+                    )
+                    .frame(width: layout.cardWidth)
+                    .offset(x: layout.cardOffset)
+                    .id(card.key)
+                    .transition(cardTransition)
+                    .hoverCursor($cardHovering)
+
+                    SentencePanelView(card: card,
+                                      onClose: app.toggleSentence,
+                                      onEdit: app.beginEditingCurrentCard)
+                        // Without an identity of its own the panel's scroll view is reused
+                        // across cards, carrying one word's scroll position into the next.
+                        .id(card.key)
+                        .frame(width: layout.panelWidth, height: stage)
+                        .offset(x: panelVisible ? layout.panelOffset : layout.panelOffset + 30)
+                        .opacity(panelVisible ? 1 : 0)
+                        .allowsHitTesting(panelVisible)
+                        .accessibilityHidden(!panelVisible)
+                }
             }
+            .frame(width: geo.size.width, height: stage)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: Metric.cardHeight)
+        .frame(height: stage)
+    }
+
+    /// The panel belongs to the revealed definition, so it is only ever on with the back.
+    private var panelVisible: Bool { session.isShowingBack && session.isShowingSentence }
+
+    /// Geometry for the card + panel pair. The panel takes a share of the width and the
+    /// card gives way to it, shrinking only once there isn't room for both at full size.
+    private struct SplitLayout {
+        let cardWidth: CGFloat
+        let panelWidth: CGFloat
+        let cardOffset: CGFloat
+        let panelOffset: CGFloat
+
+        init(available: CGFloat, showingPanel: Bool) {
+            let gap: CGFloat = 20
+            // The panel holds several sentences in two languages, so it takes a wide share
+            // of the window — enough that a sentence wraps to two lines instead of four.
+            let panel = min(440, max(310, available * 0.42))
+            let room = showingPanel ? available - panel - gap : available
+            let card = max(280, min(Metric.cardMaxWidth, room))
+            self.panelWidth = panel
+            self.cardWidth = card
+            self.cardOffset = showingPanel ? -(panel + gap) / 2 : 0
+            self.panelOffset = (card + gap) / 2
+        }
     }
 
     // Forward navigation: new card enters from the right, old exits left.
@@ -226,7 +300,7 @@ private struct StudyContent: View {
         // (Return = Study Again) would be swallowed and applied to the finished round.
         if app.route != .study { return false }
         // Don't hijack keys while a sheet or a text field is active.
-        if app.showingKnownWords { return false }
+        if app.showingKnownWords || app.editingCard != nil { return false }
         if NSApp.modalWindow != nil { return false }
         if let responder = NSApp.keyWindow?.firstResponder,
            responder is NSTextView { return false }
@@ -247,8 +321,13 @@ private struct StudyContent: View {
             app.goPrevious(); return true
         case 124:                            // right arrow
             app.advance(); return true
-        case 53:                             // escape — finish the round now
-            app.finishRound(); return true
+        case 53:                             // escape — close the panel, else finish the round
+            if panelVisible {
+                app.toggleSentence()
+            } else {
+                app.finishRound()
+            }
+            return true
         default:
             break
         }
@@ -256,6 +335,8 @@ private struct StudyContent: View {
         case "k": app.toggleCurrentKnown(); return true
         case "a": app.toggleCurrentAside(); return true
         case "f": app.flip(); return true
+        case "s": app.toggleSentence(); return true
+        case "e": app.beginEditingCurrentCard(); return true
         default: return false
         }
     }

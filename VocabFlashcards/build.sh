@@ -26,6 +26,25 @@ cp "$BIN_PATH" "$APP/Contents/MacOS/$BIN_NAME"
 cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# SwiftPM emits target resources as sibling .bundle directories next to the binary, and
+# `Bundle.module` looks for them in Contents/Resources. Without this the app launches fine
+# but silently ships with no example sentences.
+BIN_DIR="$(dirname "$BIN_PATH")"
+shopt -s nullglob
+BUNDLES=("$BIN_DIR"/*.bundle)
+shopt -u nullglob
+for b in "${BUNDLES[@]}"; do
+  cp -R "$b" "$APP/Contents/Resources/"
+  echo "    bundled $(basename "$b")"
+done
+
+CURATED="$APP/Contents/Resources/${BIN_NAME}_VocabKit.bundle/curated_content.json"
+if [ ! -f "$CURATED" ]; then
+  echo "!!! curated_content.json is missing from the app bundle — example sentences will not appear." >&2
+  exit 1
+fi
+echo "    example bank: $(wc -c < "$CURATED" | tr -d ' ') bytes"
+
 echo "==> Generating icon…"
 ICON_TMP="$(mktemp -d)"
 if swift "$ROOT/Packaging/make_icon.swift" "$ICON_TMP/icon_1024.png" >/dev/null 2>&1; then
