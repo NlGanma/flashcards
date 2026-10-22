@@ -6,8 +6,51 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+# Prefer Xcode's toolchain, but don't insist on it: the Command Line Tools build this
+# package fine, and pointing DEVELOPER_DIR at a missing Xcode fails before compiling.
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+  if [ -d /Applications/Xcode.app/Contents/Developer ]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  else
+    export DEVELOPER_DIR="$(xcode-select -p)"
+  fi
+fi
 unset SDKROOT 2>/dev/null || true
+
+# Some Command Line Tools updates leave an older release's PackageDescription
+# .private.swiftinterface beside the current module. The compiler prefers it, so
+# Package.swift fails to link ("Undefined symbols … Package.__allocating_init"). When the
+# private interface was built by a different compiler than the public one, mirror the
+# manifest and plugin APIs without it and point SwiftPM at the mirror.
+PM_LIBS="$DEVELOPER_DIR/usr/lib/swift/pm"
+PD_MODULE="$PM_LIBS/ManifestAPI/PackageDescription.swiftmodule"
+if [ -z "${SWIFTPM_CUSTOM_LIBS_DIR:-}" ] \
+   && [ -f "$PD_MODULE/arm64-apple-macos.private.swiftinterface" ] \
+   && [ "$(sed -n 2p "$PD_MODULE/arm64-apple-macos.private.swiftinterface")" != \
+        "$(sed -n 2p "$PD_MODULE/arm64-apple-macos.swiftinterface")" ]; then
+  PM_OVERLAY="$(mktemp -d)"
+  trap 'rm -rf "$PM_OVERLAY"' EXIT
+  for api in ManifestAPI PluginAPI; do
+    [ -d "$PM_LIBS/$api" ] || continue
+    mkdir -p "$PM_OVERLAY/$api"
+    for entry in "$PM_LIBS/$api"/*; do
+      name="$(basename "$entry")"
+      if [ -d "$entry" ]; then
+        mkdir -p "$PM_OVERLAY/$api/$name"
+        for f in "$entry"/*; do
+          case "$f" in
+            *.private.swiftinterface) ;;
+            *) ln -s "$f" "$PM_OVERLAY/$api/$name/" ;;
+          esac
+        done
+      else
+        ln -s "$entry" "$PM_OVERLAY/$api/"
+      fi
+    done
+  done
+  export SWIFTPM_CUSTOM_LIBS_DIR="$PM_OVERLAY"
+  echo "==> Skipping a stale PackageDescription interface in $DEVELOPER_DIR"
+fi
 
 CONFIG=release
 APP_NAME="Vocab Flashcards"
