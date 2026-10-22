@@ -21,6 +21,12 @@ struct VocabFlashcardsApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open File…") { app.presentOpenPanel() }
                     .keyboardShortcut("o", modifiers: .command)
+                Button("Make Cards from Notes…") { app.presentNotesPanel() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .disabled(app.route == .generate)
+                Button("Refine Deck with AI") { app.refineLoadedDeck() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                    .disabled(app.loadedDeck == nil || app.route == .generate)
             }
             CommandGroup(after: .sidebar) {
                 Button("Known Words…") { app.showWordManager(.known) }

@@ -26,7 +26,7 @@ struct EmptyStateView: View {
                 dropZone
                     .frame(maxWidth: 520)
 
-                Text("Your words stay entirely on this Mac — no account, no cloud.")
+                Text("Everything stays on this Mac — no account, no cloud, even when a model writes your cards.")
                     .font(.rounded(12, .medium))
                     .foregroundStyle(Color.secondaryText(scheme))
             }
@@ -57,21 +57,34 @@ struct EmptyStateView: View {
                 }
 
                 VStack(spacing: 7) {
-                    Text(isTargeted ? "Release to load" : "Drop your vocabulary file")
+                    Text(isTargeted ? "Release to load" : "Drop a word list or your notes")
                         .font(.rounded(22, .bold))
                         .foregroundStyle(Color.primaryText(scheme))
-                    Text("Drag an Excel (.xlsx) file here, or choose one below")
+                    Text("An Excel (.xlsx) word list studies as it is. Markdown notes (.md) become cards, written by a model on your Mac.")
                         .font(.rounded(14, .medium))
                         .foregroundStyle(Color.secondaryText(scheme))
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 400)
                 }
 
-                Button {
-                    app.presentOpenPanel()
-                } label: {
-                    Label("Choose File…", systemImage: "folder.fill")
+                HStack(spacing: 10) {
+                    Button {
+                        app.presentOpenPanel()
+                    } label: {
+                        Label("Choose File…", systemImage: "folder.fill")
+                    }
+                    .buttonStyle(FilledButtonStyle())
+                    .help("Open a word list, notes, or a saved deck (⌘O)")
+
+                    Button {
+                        app.presentNotesPanel()
+                    } label: {
+                        Label("Make Cards from Notes…", systemImage: "sparkles")
+                    }
+                    .buttonStyle(SoftButtonStyle(tint: Palette.violet))
+                    .help("Turn Markdown notes into flashcards with a local model (⇧⌘O)")
                 }
-                .buttonStyle(FilledButtonStyle())
                 .padding(.top, 2)
             }
             .frame(maxWidth: .infinity)
@@ -93,22 +106,39 @@ struct EmptyStateView: View {
         }
     }
 
+    /// The two kinds of file, side by side, so neither looks like the only way in.
     private var formatHint: some View {
-        VStack(spacing: 8) {
-            Text("Expected format")
-                .font(.rounded(11, .semibold))
-                .foregroundStyle(Color.secondaryText(scheme))
-                .textCase(.uppercase)
-                .tracking(0.6)
-            HStack(spacing: 8) {
-                hintChip("English word")
-                hintChip("Part of speech")
-                hintChip("Chinese definition")
+        HStack(alignment: .top, spacing: 36) {
+            VStack(spacing: 8) {
+                hintTitle("Word list", icon: "tablecells")
+                HStack(spacing: 8) {
+                    hintChip("English word")
+                    hintChip("Part of speech")
+                    hintChip("Chinese definition")
+                }
+                Text("Repeated in 3-column blocks, side by side (Practice 1, Practice 2 …)")
+                    .font(.rounded(12, .regular))
+                    .foregroundStyle(Color.secondaryText(scheme))
             }
-            Text("Repeated in 3-column blocks, side by side (Practice 1, Practice 2 …)")
-                .font(.rounded(12, .regular))
-                .foregroundStyle(Color.secondaryText(scheme))
+            VStack(spacing: 8) {
+                hintTitle("Notes", icon: "text.alignleft")
+                HStack(spacing: 8) {
+                    hintChip("## Headings")
+                    hintChip("Any text")
+                }
+                Text("Each heading becomes a set; you say what goes on the back")
+                    .font(.rounded(12, .regular))
+                    .foregroundStyle(Color.secondaryText(scheme))
+            }
         }
+    }
+
+    private func hintTitle(_ text: String, icon: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.rounded(11, .semibold))
+            .foregroundStyle(Color.secondaryText(scheme))
+            .textCase(.uppercase)
+            .tracking(0.6)
     }
 
     private func hintChip(_ text: String) -> some View {
