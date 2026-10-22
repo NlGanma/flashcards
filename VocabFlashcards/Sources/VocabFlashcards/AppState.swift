@@ -9,7 +9,7 @@ import VocabKit
 @MainActor
 final class AppState: ObservableObject {
 
-    enum Route: Equatable { case empty, setup, study, summary }
+    enum Route: Equatable { case empty, setup, study, summary, generate }
 
     // Navigation
     @Published var route: Route = .empty
@@ -20,6 +20,12 @@ final class AppState: ObservableObject {
     /// The deck behind `loadedFile` when it was generated from notes, and where it is saved.
     @Published private(set) var loadedDeck: GeneratedDeck?
     @Published private(set) var loadedDeckURL: URL?
+    /// The Markdown-to-flashcards workspace, while it is open.
+    @Published private(set) var studio: GenerationStudio?
+    private var routeBeforeStudio: Route = .empty
+
+    /// Notes the studio turns into cards. Plain text is Markdown without headings.
+    static let notesExtensions: Set<String> = ["md", "markdown", "mdown", "mkd", "txt"]
 
     // Study
     @Published var session: StudySession?
@@ -69,10 +75,15 @@ final class AppState: ObservableObject {
     }
     private var storeObserver: AnyCancellable?
 
+    /// How the studio reaches a model server; replaced in tests.
+    private let studioServices: StudioServices
+
     init(knownStore: KnownWordsStore = KnownWordsStore(),
          recentStore: RecentFileStore = RecentFileStore(),
          editsStore: CardEditsStore = CardEditsStore(),
-         contentBank: ContentBank = .bundled) {
+         contentBank: ContentBank = .bundled,
+         studioServices: StudioServices = .live) {
+        self.studioServices = studioServices
         self.knownStore = knownStore
         self.recentStore = recentStore
         self.editsStore = editsStore
@@ -114,7 +125,13 @@ final class AppState: ObservableObject {
         defer { if didStart { url.stopAccessingSecurityScopedResource() } }
 
         do {
-            if url.pathExtension.lowercased() == GeneratedDeck.fileExtension {
+            let ext = url.pathExtension.lowercased()
+            if Self.notesExtensions.contains(ext) {
+                // Notes aren't remembered: what comes back next launch is the deck made from them.
+                openStudio(markdown: try Self.readNotes(at: url), fileName: url.lastPathComponent)
+                return
+            }
+            if ext == GeneratedDeck.fileExtension {
                 let deck = try GeneratedDeck.read(from: url)
                 present(deck.loadedFile(at: url), deck: deck)
             } else {
@@ -127,6 +144,62 @@ final class AppState: ObservableObject {
             errorMessage = "Something went wrong reading that file. Please try another."
             if loadedFile == nil { route = .empty }
         }
+    }
+
+    static func readNotes(at url: URL) throws -> String {
+        let name = url.lastPathComponent
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            throw VocabError.cannotAccess(fileName: name)
+        }
+        var encoding = String.Encoding.utf8
+        let text = (try? String(contentsOf: url, usedEncoding: &encoding))
+            ?? (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
+        guard let text else { throw VocabError.unreadable(fileName: name) }
+        guard !TextNormalizer.isBlank(text) else { throw VocabError.emptyNotes(fileName: name) }
+        return text
+    }
+
+    // MARK: - Generation studio
+
+    func openStudio(markdown: String, fileName: String) {
+        showStudio(GenerationStudio(markdown: markdown, fileName: fileName, services: studioServices))
+    }
+
+    /// Reopen the loaded generated deck in the studio to keep refining it.
+    func refineLoadedDeck() {
+        guard let deck = loadedDeck, let url = loadedDeckURL else { return }
+        showStudio(GenerationStudio(deck: deck, url: url, services: studioServices))
+    }
+
+    private func showStudio(_ studio: GenerationStudio) {
+        errorMessage = nil
+        infoMessage = nil
+        if route != .generate { routeBeforeStudio = route }
+        self.studio?.cancel()
+        self.studio = studio
+        withAnimation(Motion.gentleSpring) { route = .generate }
+        Task { await studio.connect() }
+    }
+
+    /// Save the studio's cards as a deck and open it, ready to study.
+    func studyStudioCards() {
+        guard let studio, !studio.cards.isEmpty, !studio.isWorking else { return }
+        do {
+            let url = try studio.save()
+            self.studio = nil
+            loadFile(at: url, remember: true)
+        } catch {
+            studio.reportSaveFailure(error)
+        }
+    }
+
+    /// Leave the studio without saving.
+    func closeStudio() {
+        studio?.cancel()
+        studio = nil
+        let back: Route = loadedFile == nil ? .empty
+            : ([.setup, .study, .summary].contains(routeBeforeStudio) ? routeBeforeStudio : .setup)
+        withAnimation(Motion.gentleSpring) { route = back }
     }
 
     /// Show a freshly loaded file on the set picker, every set selected.
@@ -166,14 +239,29 @@ final class AppState: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseFiles = true
         panel.prompt = "Open"
-        panel.message = "Choose an Excel (.xlsx) vocabulary file or a saved deck (.vfdeck)"
+        panel.message = "Choose a vocabulary spreadsheet (.xlsx), notes to turn into cards (.md), or a saved deck"
         var types: [UTType] = []
         if let xlsx = UTType(filenameExtension: "xlsx") { types.append(xlsx) }
         types.append(.spreadsheet)
         if let deck = UTType(filenameExtension: GeneratedDeck.fileExtension) { types.append(deck) }
+        types += Self.notesExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowedContentTypes = types
         if panel.runModal() == .OK, let url = panel.url {
             loadFile(at: url, remember: true)
+        }
+    }
+
+    /// Pick notes for the model to turn into cards.
+    func presentNotesPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.prompt = "Make Cards"
+        panel.message = "Choose Markdown or text notes. A model running on this Mac turns them into flashcards."
+        panel.allowedContentTypes = Self.notesExtensions.compactMap { UTType(filenameExtension: $0) }
+        if panel.runModal() == .OK, let url = panel.url {
+            loadFile(at: url, remember: false)
         }
     }
 

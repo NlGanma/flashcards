@@ -13,6 +13,8 @@ public enum VocabError: LocalizedError, Equatable {
     case emptyWorkbook
     /// No 3-column vocabulary blocks with valid English words were found.
     case noValidSets
+    /// Notes chosen for card generation have no text in them.
+    case emptyNotes(fileName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -26,13 +28,15 @@ public enum VocabError: LocalizedError, Equatable {
             return "This spreadsheet looks empty."
         case .noValidSets:
             return "No vocabulary sets found."
+        case .emptyNotes(let name):
+            return "“\(name)” is empty."
         }
     }
 
     public var recoverySuggestion: String? {
         switch self {
         case .notXLSX:
-            return "Choose an Excel workbook (.xlsx) or a saved deck (.vfdeck)."
+            return "Choose an Excel workbook (.xlsx), notes to turn into cards (.md or .txt), or a saved deck (.vfdeck)."
         case .cannotAccess:
             return "It may have been moved or deleted. Try uploading it again."
         case .unreadable:
@@ -41,6 +45,8 @@ public enum VocabError: LocalizedError, Equatable {
             return "Add some vocabulary and upload it again."
         case .noValidSets:
             return "Make sure each set has an English word, part of speech, and definition in three columns."
+        case .emptyNotes:
+            return "Write some notes in it first, then open it again."
         }
     }
 

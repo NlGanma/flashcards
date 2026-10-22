@@ -9,15 +9,17 @@ struct AppFixture {
     let app: AppState
     let directory: URL
 
-    init(bank: ContentBank = ContentBank(words: [:])) {
+    init(bank: ContentBank = ContentBank(words: [:]), server: FakeServer = FakeServer(models: nil)) {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("VocabFlashcardsGenTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let defaults = UserDefaults(suiteName: "VocabFlashcardsGenTests-\(UUID().uuidString)")!
+        let services = StudioServices(makeServer: { _ in server }, discover: { [] }, defaults: defaults,
+                                      decksDirectory: directory.appendingPathComponent("Decks"))
         app = AppState(knownStore: KnownWordsStore(directory: directory),
                        recentStore: RecentFileStore(defaults: defaults),
                        editsStore: CardEditsStore(directory: directory),
-                       contentBank: bank)
+                       contentBank: bank, studioServices: services)
     }
 
     func writeDeck(_ deck: GeneratedDeck, name: String = "bio.vfdeck") throws -> URL {
@@ -83,9 +85,9 @@ struct OpenDeckTests {
 
     @Test func anUnsupportedFileSaysWhatCanBeOpened() {
         let fixture = AppFixture()
-        fixture.app.loadFile(at: fixture.directory.appendingPathComponent("notes.txt"), remember: false)
-        #expect(fixture.app.errorMessage == "“notes.txt” isn't a file Vocab Flashcards can open. "
-                + "Choose an Excel workbook (.xlsx) or a saved deck (.vfdeck).")
+        fixture.app.loadFile(at: fixture.directory.appendingPathComponent("slides.pdf"), remember: false)
+        #expect(fixture.app.errorMessage == "“slides.pdf” isn't a file Vocab Flashcards can open. "
+                + "Choose an Excel workbook (.xlsx), notes to turn into cards (.md or .txt), or a saved deck (.vfdeck).")
         #expect(fixture.app.route == .empty)
     }
 
