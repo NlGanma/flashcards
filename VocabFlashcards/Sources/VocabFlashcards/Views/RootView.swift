@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Top-level router: draws the ambient background and swaps between the empty, setup,
-/// study, and summary screens with smooth transitions. Owns the app's sheet and the
+/// study, summary and generation-studio screens with smooth transitions. Owns the app's sheet and the
 /// window-wide file drop.
 struct RootView: View {
     @EnvironmentObject private var app: AppState
@@ -18,8 +18,9 @@ struct RootView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
 
             // The empty state has its own drop affordance; show the full-window overlay
-            // only once a file is already loaded.
-            if dropTargeted && app.route != .empty {
+            // only once a file is already loaded. The studio takes no drops at all — a
+            // stray file would throw away the cards being written.
+            if dropTargeted && app.route != .empty && app.route != .generate {
                 dropOverlay
             }
         }
@@ -36,7 +37,7 @@ struct RootView: View {
         }
         // Accept a dropped .xlsx anywhere in the window, not just the empty state.
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted.animation(Motion.quick)) { providers in
-            guard let provider = providers.first else { return false }
+            guard app.route != .generate, let provider = providers.first else { return false }
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 DispatchQueue.main.async { app.handleDrop(url: url) }
@@ -63,6 +64,7 @@ struct RootView: View {
         case .setup:   SetupView()
         case .study:   StudyView()
         case .summary: SummaryView()
+        case .generate: StudioView()
         }
     }
 

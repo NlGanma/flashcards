@@ -456,6 +456,12 @@ public enum LLMServerDiscovery {
         public let endpoint: LLMEndpoint
         public let models: [String]
         public var id: URL { endpoint.baseURL }
+
+        public init(name: String, endpoint: LLMEndpoint, models: [String]) {
+            self.name = name
+            self.endpoint = endpoint
+            self.models = models
+        }
     }
 
     public static let knownServers: [(name: String, url: URL)] = [
