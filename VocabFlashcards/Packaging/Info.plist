@@ -28,6 +28,13 @@
     <string>public.app-category.education</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <!-- Card generation talks to a model server over plain HTTP: on this Mac, or on
+         another machine on the local network. Internet hosts still need HTTPS. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
     <key>NSHumanReadableCopyright</key>
     <string>Local-only vocabulary flashcards.</string>
 </dict>
