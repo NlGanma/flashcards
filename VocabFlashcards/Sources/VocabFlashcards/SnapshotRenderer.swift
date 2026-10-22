@@ -258,7 +258,7 @@ enum SnapshotRenderer {
         // visible even when the set list is scrolled down.
         let errored = makeApp(known: known)
         errored.loadFile(at: sampleURL, remember: false)
-        errored.errorMessage = "“notes.txt” isn't an Excel file. Please choose a file that ends in .xlsx."
+        errored.errorMessage = VocabError.notXLSX(fileName: "notes.txt").friendlyMessage
         save(RootView().environmentObject(errored), size: full, name: "28_setup_error", dir: dir)
         save(RootView().environmentObject(errored), size: full, name: "29_setup_error_dark",
              dir: dir, dark: true)

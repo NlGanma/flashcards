@@ -17,6 +17,9 @@ final class AppState: ObservableObject {
     // Loaded content
     @Published var loadedFile: LoadedFile?
     @Published var selectedSetIDs: Set<UUID> = []
+    /// The deck behind `loadedFile` when it was generated from notes, and where it is saved.
+    @Published private(set) var loadedDeck: GeneratedDeck?
+    @Published private(set) var loadedDeckURL: URL?
 
     // Study
     @Published var session: StudySession?
@@ -57,7 +60,13 @@ final class AppState: ObservableObject {
     private let parser = XLSXVocabParser()
     private let deckBuilder = DeckBuilder()
     /// Merges curated example sentences and the user's own card edits onto parsed cards.
-    private let resolver: CardContentResolver
+    private let curatedResolver: CardContentResolver
+    /// For generated decks: the user's edits only. The curated bank's corrections are keyed
+    /// to spreadsheet definitions and would overwrite the answer the model was asked for.
+    private let editsOnlyResolver: CardContentResolver
+    private var resolver: CardContentResolver {
+        loadedFile?.origin == .generated ? editsOnlyResolver : curatedResolver
+    }
     private var storeObserver: AnyCancellable?
 
     init(knownStore: KnownWordsStore = KnownWordsStore(),
@@ -67,7 +76,8 @@ final class AppState: ObservableObject {
         self.knownStore = knownStore
         self.recentStore = recentStore
         self.editsStore = editsStore
-        self.resolver = CardContentResolver(bank: contentBank, edits: editsStore)
+        self.curatedResolver = CardContentResolver(bank: contentBank, edits: editsStore)
+        self.editsOnlyResolver = CardContentResolver(bank: nil, edits: editsStore)
         if let raw = UserDefaults.standard.string(forKey: Self.filterKey),
            let saved = KnownFilter(rawValue: raw) {
             pendingFilter = saved
@@ -104,21 +114,12 @@ final class AppState: ObservableObject {
         defer { if didStart { url.stopAccessingSecurityScopedResource() } }
 
         do {
-            let file = try parser.parse(fileURL: url)
-            resetKnownFlash()
-            withAnimation(Motion.gentleSpring) {
-                self.loadedFile = file
-                self.selectedSetIDs = Set(file.sets.map(\.id))   // select all by default
-                self.session = nil
-                self.lastSummary = nil
-                self.route = .setup
+            if url.pathExtension.lowercased() == GeneratedDeck.fileExtension {
+                let deck = try GeneratedDeck.read(from: url)
+                present(deck.loadedFile(at: url), deck: deck)
+            } else {
+                present(try parser.parse(fileURL: url), deck: nil)
             }
-            // Repair display forms saved by older cleaning rules, now that we know how
-            // every word in this file reads today. No-op once they agree.
-            knownStore.reconcileDisplays(
-                Dictionary(file.sets.flatMap { $0.items }.map { ($0.key, $0.english) },
-                           uniquingKeysWith: { first, _ in first })
-            )
             if remember { recentStore.save(url: url) }
         } catch let error as VocabError {
             handle(error, url: url)
@@ -126,6 +127,26 @@ final class AppState: ObservableObject {
             errorMessage = "Something went wrong reading that file. Please try another."
             if loadedFile == nil { route = .empty }
         }
+    }
+
+    /// Show a freshly loaded file on the set picker, every set selected.
+    private func present(_ file: LoadedFile, deck: GeneratedDeck?) {
+        resetKnownFlash()
+        withAnimation(Motion.gentleSpring) {
+            self.loadedFile = file
+            self.loadedDeck = deck
+            self.loadedDeckURL = deck == nil ? nil : file.url
+            self.selectedSetIDs = Set(file.sets.map(\.id))   // select all by default
+            self.session = nil
+            self.lastSummary = nil
+            self.route = .setup
+        }
+        // Repair display forms saved by older cleaning rules, now that we know how
+        // every word in this file reads today. No-op once they agree.
+        knownStore.reconcileDisplays(
+            Dictionary(file.sets.flatMap { $0.items }.map { ($0.key, $0.english) },
+                       uniquingKeysWith: { first, _ in first })
+        )
     }
 
     private func handle(_ error: VocabError, url: URL) {
@@ -138,17 +159,18 @@ final class AppState: ObservableObject {
         if loadedFile == nil { route = .empty }
     }
 
-    /// Present a native open panel to pick a new .xlsx file.
+    /// Present a native open panel to pick a spreadsheet or a saved deck.
     func presentOpenPanel() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.canChooseFiles = true
         panel.prompt = "Open"
-        panel.message = "Choose an Excel (.xlsx) vocabulary file"
+        panel.message = "Choose an Excel (.xlsx) vocabulary file or a saved deck (.vfdeck)"
         var types: [UTType] = []
         if let xlsx = UTType(filenameExtension: "xlsx") { types.append(xlsx) }
         types.append(.spreadsheet)
+        if let deck = UTType(filenameExtension: GeneratedDeck.fileExtension) { types.append(deck) }
         panel.allowedContentTypes = types
         if panel.runModal() == .OK, let url = panel.url {
             loadFile(at: url, remember: true)
@@ -531,6 +553,8 @@ final class AppState: ObservableObject {
         resetKnownFlash()
         withAnimation(Motion.gentleSpring) {
             self.loadedFile = nil
+            self.loadedDeck = nil
+            self.loadedDeckURL = nil
             self.selectedSetIDs = []
             self.session = nil
             self.lastSummary = nil

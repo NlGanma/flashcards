@@ -48,6 +48,11 @@ let package = Package(
         .testTarget(
             name: "VocabGenTests",
             dependencies: ["VocabKit"]
+        ),
+        // The app side of generation: opening decks and Markdown, and the studio.
+        .testTarget(
+            name: "VocabFlashcardsGenTests",
+            dependencies: ["VocabFlashcards", "VocabKit"]
         )
     ]
 )
