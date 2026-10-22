@@ -44,10 +44,10 @@ public struct DeckBuilder {
             self.word = word
         }
 
-        func add(pos: String, def: String, set: String) {
+        func add(pos: String, def: String, set: String, examples: [Example]) {
             // A sense is only recorded when it carries some content.
             if !(pos.isEmpty && def.isEmpty) {
-                let sense = Sense(partOfSpeech: pos, definition: def)
+                let sense = Sense(partOfSpeech: pos, definition: def, examples: examples)
                 if seenSenses.insert(sense.meaningSignature).inserted {
                     senses.append(sense)
                 }
@@ -84,7 +84,8 @@ public struct DeckBuilder {
                     accumulators[key] = acc
                     order.append(key)
                 }
-                acc.add(pos: item.partOfSpeech, def: item.definition, set: item.setName)
+                acc.add(pos: item.partOfSpeech, def: item.definition, set: item.setName,
+                        examples: item.examples)
             }
         }
 

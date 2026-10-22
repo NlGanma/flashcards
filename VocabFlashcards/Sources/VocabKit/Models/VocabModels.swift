@@ -12,16 +12,21 @@ public struct VocabItem: Identifiable, Hashable, Codable, Sendable {
     public let definition: String
     /// Name of the practice set this item came from.
     public let setName: String
+    /// Sentences that arrive with the item itself. Spreadsheets have none — their
+    /// sentences come from the curated bank — but a generated card carries its own.
+    public let examples: [Example]
 
     /// Case- and whitespace-insensitive identity based on the English word only.
     public var key: String { TextNormalizer.normalizedKey(english) }
 
-    public init(id: UUID = UUID(), english: String, partOfSpeech: String, definition: String, setName: String) {
+    public init(id: UUID = UUID(), english: String, partOfSpeech: String, definition: String, setName: String,
+                examples: [Example] = []) {
         self.id = id
         self.english = english
         self.partOfSpeech = partOfSpeech
         self.definition = definition
         self.setName = setName
+        self.examples = examples
     }
 }
 
@@ -45,18 +50,27 @@ public struct PracticeSet: Identifiable, Hashable, Codable, Sendable {
     public var uniqueWordCount: Int { Set(items.map(\.key)).count }
 }
 
-/// A successfully parsed spreadsheet: the file itself plus its detected practice sets.
+/// A successfully loaded file — a spreadsheet, or a deck generated from notes — plus
+/// its practice sets.
 public struct LoadedFile: Identifiable, Sendable {
+    /// Where the cards came from. Generated decks skip the curated example bank: its
+    /// corrections are keyed to spreadsheet definitions, and would overwrite an answer the
+    /// learner asked the model for whenever a front happens to be a bundled SAT word.
+    public enum Origin: Hashable, Sendable { case spreadsheet, generated }
+
     public let id: UUID
     public let fileName: String
     public let url: URL
     public let sets: [PracticeSet]
+    public let origin: Origin
 
-    public init(id: UUID = UUID(), fileName: String, url: URL, sets: [PracticeSet]) {
+    public init(id: UUID = UUID(), fileName: String, url: URL, sets: [PracticeSet],
+                origin: Origin = .spreadsheet) {
         self.id = id
         self.fileName = fileName
         self.url = url
         self.sets = sets
+        self.origin = origin
     }
 
     public var totalItems: Int { sets.reduce(0) { $0 + $1.wordCount } }
