@@ -178,12 +178,15 @@ struct FlashcardView: View {
     private var backHeader: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
+                // A word fits one line; a question front from a generated deck needs two,
+                // or the back hides the very question it answers.
                 Text(card.word)
-                    .font(.rounded(26, .bold))
-                    .tracking(-0.5)
+                    .font(.rounded(card.word.count > 28 ? 18 : 26, .bold))
+                    .tracking(card.word.count > 28 ? -0.2 : -0.5)
                     .foregroundStyle(Color.primaryText(scheme))
-                    .lineLimit(1)
+                    .lineLimit(card.word.count > 28 ? 2 : 1)
                     .minimumScaleFactor(0.6)
+                    .fixedSize(horizontal: false, vertical: true)
                 if !card.sourceSets.isEmpty {
                     Text(card.sourceSets.joined(separator: " · "))
                         .font(.rounded(11, .medium))
@@ -347,12 +350,13 @@ struct FlashcardView: View {
     }
 
     // The definition is the hero of the back: as large as will fit, vertically centered.
-    // Long multi-sense lists scroll with a soft fade at the bottom edge.
+    // Long multi-sense lists, and the paragraph-length answers a generated deck can carry,
+    // scroll with a soft fade at the bottom edge instead of stretching the card.
     @ViewBuilder
     private var backContent: some View {
         if card.hasContent {
-            if card.senses.count > 3 {
-                ScrollView { sensesStack }
+            if needsScroll {
+                SnapshotableScrollView { sensesStack }
                     .mask(
                         LinearGradient(colors: [.black, .black, .black, .clear],
                                        startPoint: .top, endPoint: .bottom)
@@ -372,30 +376,65 @@ struct FlashcardView: View {
         }
     }
 
+    /// Characters in the longest definition — what decides how large the text can be.
+    private var longestDefinition: Int {
+        card.senses.map(\.definition.count).max() ?? 0
+    }
+
+    private var totalDefinitionLength: Int {
+        card.senses.reduce(0) { $0 + $1.definition.count }
+    }
+
+    private var needsScroll: Bool {
+        card.senses.count > 3 || totalDefinitionLength > 220
+    }
+
+    /// A paragraph reads badly centered: past a couple of lines, the ragged left edge makes
+    /// every line start somewhere new.
+    private var isProse: Bool { longestDefinition > 140 }
+
     /// Size the definition to fill the card — a single short definition is huge; more
-    /// senses (or longer text) scale down so everything stays legible and un-clipped.
+    /// senses (or longer text) scale down so everything stays legible and un-clipped. The
+    /// first tiers are tuned for spreadsheet glosses; the rest are for generated answers,
+    /// which run to sentences.
     private var senseFontSize: CGFloat {
+        let byCount: CGFloat
         switch card.senses.count {
-        case 1:
-            let len = card.senses.first?.definition.count ?? 0
-            if len <= 10 { return 46 }
-            if len <= 18 { return 38 }
-            if len <= 30 { return 30 }
-            return 25
-        case 2: return 30
-        case 3: return 25
-        default: return 21
+        case 1: byCount = 46
+        case 2: byCount = 30
+        case 3: byCount = 25
+        default: byCount = 21
+        }
+        let byLength: CGFloat
+        switch longestDefinition {
+        case ...10: byLength = 46
+        case ...18: byLength = 38
+        case ...30: byLength = 30
+        case ...70: byLength = 25
+        case ...140: byLength = 21
+        case ...260: byLength = 18
+        default: byLength = 16
+        }
+        return min(byCount, byLength)
+    }
+
+    /// Bold carries a word or a short gloss; a paragraph set in bold is a wall.
+    private var senseWeight: Font.Weight {
+        switch senseFontSize {
+        case 25...: return .bold
+        case 21...: return .semibold
+        default: return .medium
         }
     }
 
     private var sensesStack: some View {
-        let single = card.senses.count == 1
-        return VStack(alignment: single ? .center : .leading, spacing: single ? 12 : 20) {
+        let centered = card.senses.count == 1 && !isProse
+        return VStack(alignment: centered ? .center : .leading, spacing: centered ? 12 : 20) {
             ForEach(Array(card.senses.enumerated()), id: \.offset) { _, sense in
-                senseRow(sense, centered: single)
+                senseRow(sense, centered: centered)
             }
         }
-        .frame(maxWidth: .infinity, alignment: single ? .center : .leading)
+        .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
         .padding(.horizontal, 28)
         .padding(.vertical, 14)
         // Merging the part-of-speech chips into the definitions is what you want *here* —
@@ -414,8 +453,8 @@ struct FlashcardView: View {
                     .background(Capsule().fill(Palette.indigo.opacity(scheme == .dark ? 0.20 : 0.14)))
             }
             Text(sense.definition.isEmpty ? "—" : sense.definition)
-                .font(.rounded(senseFontSize, .bold))
-                .lineSpacing(6)
+                .font(.rounded(senseFontSize, senseWeight))
+                .lineSpacing(senseFontSize >= 25 ? 6 : 4)
                 .foregroundStyle(Color.primaryText(scheme))
                 .multilineTextAlignment(centered ? .center : .leading)
                 .minimumScaleFactor(0.4)

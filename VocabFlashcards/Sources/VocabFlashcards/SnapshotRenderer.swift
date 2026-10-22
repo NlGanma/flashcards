@@ -21,7 +21,11 @@ struct SnapshotableScrollView<Content: View>: View {
 
     var body: some View {
         if SnapshotConfig.skipIntro {
+            // Pinned to the top and clipped, the way a scroll view looks before it's scrolled.
             content()
+                .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity)
+                .clipped()
         } else {
             ScrollView { content() }
         }
@@ -302,6 +306,8 @@ enum SnapshotRenderer {
         save(RootView().environmentObject(app), size: full, name: "52_summary_with_almost_dark",
              dir: dir, dark: true)
 
+        renderStudio(into: dir, known: known)
+
         // Word manager — both banks.
         save(KnownWordsView(store: known).environmentObject(app),
              size: CGSize(width: 460, height: 560), name: "60_known_words", dir: dir)
@@ -324,8 +330,163 @@ enum SnapshotRenderer {
         let edits = CardEditsStore(
             directory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("vf-snap-edits-\(UUID().uuidString)"))
+        // Nor talk to a real model server: the studio is staged by hand below.
+        let studio = StudioServices(makeServer: { _ in OfflineServer() }, discover: { [] }, defaults: defaults,
+                                    decksDirectory: FileManager.default.temporaryDirectory
+                                        .appendingPathComponent("vf-snap-decks-\(UUID().uuidString)"))
         return AppState(knownStore: known, recentStore: RecentFileStore(defaults: defaults),
-                        editsStore: edits)
+                        editsStore: edits, studioServices: studio)
+    }
+
+    private struct OfflineServer: ModelServer {
+        func models(timeout: TimeInterval) async throws -> [String] { throw LLMError.unreachable("snapshot") }
+        func stream(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { $0.finish(throwing: LLMError.unreachable("snapshot")) }
+        }
+    }
+
+    // MARK: - Generation studio
+
+    static let studioNotes = """
+        # Cell Biology
+
+        Cells are the basic unit of life.
+
+        ## Organelles
+        The mitochondrion produces ATP through cellular respiration. Ribosomes build proteins by
+        translating messenger RNA. The nucleus stores the cell's DNA.
+
+        ## Transport
+        Osmosis is the diffusion of water across a semipermeable membrane. Active transport moves
+        molecules against their concentration gradient and requires ATP.
+
+        ## Division
+        Mitosis produces two identical daughter cells. Meiosis produces four gametes with half the
+        chromosomes.
+        """
+
+    static let studioCards: [GeneratedCard] = [
+        GeneratedCard(front: "mitochondrion", back: "The organelle that makes ATP through cellular respiration.",
+                      tag: "organelle", example: "Muscle cells are packed with mitochondria.",
+                      exampleNote: "肌肉细胞里充满了线粒体。", section: "Organelles"),
+        GeneratedCard(front: "ribosome", back: "Builds proteins by translating messenger RNA.",
+                      tag: "organelle", example: "Ribosomes read the mRNA three bases at a time.",
+                      section: "Organelles"),
+        GeneratedCard(front: "nucleus", back: "Stores the cell's DNA.", tag: "organelle", section: "Organelles"),
+        GeneratedCard(front: "osmosis", back: "The diffusion of water across a semipermeable membrane.",
+                      tag: "process", example: "A raisin swells in water by osmosis.",
+                      exampleNote: "葡萄干在水中因渗透作用而膨胀。", section: "Transport"),
+        GeneratedCard(front: "What does active transport need that diffusion doesn't?",
+                      back: "Energy, as ATP — it moves molecules against their concentration gradient.",
+                      tag: "process", section: "Transport"),
+        GeneratedCard(front: "mitosis", back: "Division into two identical daughter cells.", tag: "process",
+                      section: "Division"),
+        GeneratedCard(front: "meiosis", back: "Division into four gametes, each with half the chromosomes.",
+                      tag: "process", section: "Division"),
+        // What a learner gets after asking for "a full explanation, then why it matters".
+        GeneratedCard(front: "Why does a cell need both passive and active transport across its membrane?",
+                      back: "Passive transport, such as diffusion and osmosis, moves substances down their concentration gradient and costs the cell no energy. Active transport pumps molecules against the gradient using ATP, which lets the cell build up nutrients and ions it could never gather by diffusion alone. Together they keep the cell's interior stable while still letting it take in what it needs.",
+                      tag: "concept", section: "Transport")
+    ]
+
+    private static func renderStudio(into dir: URL, known: KnownWordsStore) {
+        let full = CGSize(width: 1040, height: 720)
+        let lmStudio = GenerationStudio.Connection.connected(server: "LM Studio")
+        let model = "lmstudio-community/Qwen2.5-7B-Instruct-GGUF/qwen2.5-7b-instruct-q4_k_m.gguf"
+
+        // A fresh studio: no cards yet, the sections it is about to read.
+        let fresh = makeApp(known: known)
+        fresh.openStudio(markdown: studioNotes, fileName: "Cell Biology.md")
+        fresh.studio?.endpoint.model = model
+        fresh.studio?.stage(cards: [], connection: lmStudio, models: [model])
+        save(RootView().environmentObject(fresh), size: full, name: "80_studio_new", dir: dir)
+        save(RootView().environmentObject(fresh), size: full, name: "80b_studio_new_dark", dir: dir, dark: true)
+
+        // Writing: the first cards are in and the model is on the second section.
+        let writing = makeApp(known: known)
+        writing.openStudio(markdown: studioNotes, fileName: "Cell Biology.md")
+        writing.studio?.endpoint.model = model
+        let greeting = writing.studio?.messages ?? []
+        writing.studio?.stage(
+            cards: Array(studioCards.prefix(4)),
+            messages: greeting + [.init(role: .user, text: "Definition plus an example sentence, with the Chinese translation")],
+            progress: .init(step: 2, total: 3, label: "Reading “Transport”"), working: true,
+            connection: lmStudio, models: [model])
+        save(RootView().environmentObject(writing), size: full, name: "81_studio_writing", dir: dir)
+
+        // Done, with one card picked for a follow-up.
+        let done = makeApp(known: known)
+        done.openStudio(markdown: studioNotes, fileName: "Cell Biology.md")
+        done.studio?.endpoint.model = model
+        let doneGreeting = done.studio?.messages ?? []
+        done.studio?.stage(
+            cards: studioCards,
+            messages: doneGreeting + [
+                .init(role: .user, text: "Definition plus an example sentence, with the Chinese translation"),
+                .init(role: .assistant, text: "Made 7 cards in 3 sets. Pick a card to change just that one, or tell me what to change on all of them."),
+                .init(role: .user, text: "Make every back shorter"),
+                .init(role: .assistant, text: "Updated 5 of 7 cards.")],
+            connection: lmStudio, models: [model], focusedCardID: studioCards[4].id,
+            draft: "Turn it into a simpler question")
+        save(RootView().environmentObject(done), size: full, name: "82_studio_cards", dir: dir)
+        save(RootView().environmentObject(done), size: full, name: "82b_studio_cards_dark", dir: dir, dark: true)
+        save(RootView().environmentObject(done), size: CGSize(width: 880, height: 640),
+             name: "84_studio_min", dir: dir)
+
+        // No server running.
+        let offline = makeApp(known: known)
+        offline.openStudio(markdown: studioNotes, fileName: "Cell Biology.md")
+        let offlineGreeting = offline.studio?.messages ?? []
+        offline.studio?.stage(
+            cards: [],
+            messages: offlineGreeting + [.init(role: .user, text: "A one-sentence definition"),
+                                         .init(role: .error, text: GenerationStudio.noServerHelp)],
+            connection: .unreachable("Couldn't reach a model server at 127.0.0.1:1234."))
+        save(RootView().environmentObject(offline), size: full, name: "83_studio_no_server", dir: dir)
+        save(RootView().environmentObject(offline), size: full, name: "83b_studio_no_server_dark",
+             dir: dir, dark: true)
+
+        // The model settings popover's content, connected and not.
+        if let studio = done.studio {
+            save(ModelSettingsView(studio: studio).background(Color.surface(.light)),
+                 size: CGSize(width: 340, height: 300), name: "85_model_settings", dir: dir)
+        }
+        if let studio = offline.studio {
+            save(ModelSettingsView(studio: studio).background(Color.surface(.dark)),
+                 size: CGSize(width: 340, height: 420), name: "85b_model_settings_offline_dark",
+                 dir: dir, dark: true)
+        }
+
+        // A generated card on the study screen: answers are sentences, not two-character glosses.
+        let deckDir = FileManager.default.temporaryDirectory.appendingPathComponent("vf-snap-deck-\(UUID().uuidString)")
+        let deckURL = deckDir.appendingPathComponent("Cell Biology.vfdeck")
+        let deck = GeneratedDeck(title: "Cell Biology", sourceFileName: "Cell Biology.md",
+                                 sourceMarkdown: studioNotes, cards: studioCards)
+        try? deck.write(to: deckURL)
+        let studying = makeApp(known: known)
+        studying.loadFile(at: deckURL, remember: false)
+        save(RootView().environmentObject(studying), size: full, name: "86_generated_setup", dir: dir)
+        save(RootView().environmentObject(studying), size: full, name: "86b_generated_setup_dark", dir: dir, dark: true)
+        for (index, card) in [(4, "87_generated_back_question"), (0, "88_generated_back_example"),
+                              (3, "89_generated_back_osmosis"), (7, "90_generated_back_long")] {
+            let flashcard = Flashcard(id: TextNormalizer.normalizedKey(studioCards[index].front),
+                                      word: studioCards[index].front, senses: [studioCards[index].sense],
+                                      sourceSets: [studioCards[index].section])
+            for dark in [false, true] {
+                save(ZStack {
+                        AppBackground()
+                        FlashcardView(card: flashcard, isShowingBack: true, isKnownFlash: false).padding(40)
+                     },
+                     size: CGSize(width: Metric.cardMaxWidth + 80, height: Metric.cardHeight + 80),
+                     name: "\(card)\(dark ? "_dark" : "")", dir: dir, dark: dark)
+                save(ZStack {
+                        AppBackground()
+                        FlashcardView(card: flashcard, isShowingBack: false, isKnownFlash: false).padding(40)
+                     },
+                     size: CGSize(width: Metric.cardMaxWidth + 80, height: Metric.cardHeight + 80),
+                     name: "\(card)_front\(dark ? "_dark" : "")", dir: dir, dark: dark)
+            }
+        }
     }
 
     /// A card carrying worked examples, for the panel screens. Two glosses, two sentences.

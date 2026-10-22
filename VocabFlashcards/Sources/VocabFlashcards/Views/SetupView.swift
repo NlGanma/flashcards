@@ -22,7 +22,7 @@ struct SetupView: View {
             // silently ignored the file.
             messages
 
-            ScrollView {
+            SnapshotableScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     headerRow
 
@@ -33,7 +33,8 @@ struct SetupView: View {
                                     set: set,
                                     isSelected: app.selectedSetIDs.contains(set.id),
                                     knownCount: knownCount(in: set),
-                                    asideCount: asideCount(in: set)
+                                    asideCount: asideCount(in: set),
+                                    unit: isGenerated ? "card" : "word"
                                 )
                                 .onTapGesture {
                                     withAnimation(Motion.spring) { app.toggleSet(set.id) }
@@ -71,17 +72,37 @@ struct SetupView: View {
 
     // MARK: - Top bar
 
+    private var isGenerated: Bool { app.loadedFile?.origin == .generated }
+
     private var topBar: some View {
         HStack(spacing: 14) {
-            Image(systemName: "doc.text.fill")
+            Image(systemName: isGenerated ? "sparkles" : "doc.text.fill")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Palette.indigo)
-            Text(app.loadedFile?.fileName ?? "No file")
-                .font(.rounded(15, .semibold))
-                .foregroundStyle(Color.primaryText(scheme))
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .foregroundStyle(isGenerated ? Palette.violet : Palette.indigo)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(app.loadedFile?.fileName ?? "No file")
+                    .font(.rounded(15, .semibold))
+                    .foregroundStyle(Color.primaryText(scheme))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if isGenerated, let source = app.loadedDeck?.sourceFileName, !source.isEmpty {
+                    Text("Made from \(source)")
+                        .font(.rounded(11, .medium))
+                        .foregroundStyle(Color.secondaryText(scheme))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
             Spacer()
+            if isGenerated {
+                Button {
+                    app.refineLoadedDeck()
+                } label: {
+                    Label("Refine with AI", systemImage: "sparkles")
+                }
+                .buttonStyle(SoftButtonStyle(tint: Palette.violet))
+                .help("Reopen these cards and the chat that made them (⇧⌘R)")
+            }
             if app.knownStore.asideCount > 0 {
                 Button {
                     app.showWordManager(.aside)
@@ -105,7 +126,7 @@ struct SetupView: View {
                 Label("Change File", systemImage: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(GhostButtonStyle())
-            .help("Open a different vocabulary file (⌘O)")
+            .help("Open a different word list, notes, or deck (⌘O)")
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
@@ -139,7 +160,8 @@ struct SetupView: View {
         let count = app.selectedSetIDs.count
         guard count > 0 else { return "Select at least one set to begin" }
         let words = app.selectedUniqueWordCount()
-        return "\(count) set\(count == 1 ? "" : "s") selected · \(words) unique word\(words == 1 ? "" : "s")"
+        let unit = isGenerated ? "card" : "unique word"
+        return "\(count) set\(count == 1 ? "" : "s") selected · \(words) \(unit)\(words == 1 ? "" : "s")"
     }
 
     // MARK: - Start bar (inline mode picker + one-action start)
@@ -220,6 +242,8 @@ struct PracticeSetCardView: View {
     let isSelected: Bool
     let knownCount: Int
     var asideCount: Int = 0
+    /// What the set holds: words from a spreadsheet, cards from generated notes.
+    var unit: String = "word"
     @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
 
@@ -275,9 +299,9 @@ struct PracticeSetCardView: View {
     private var cardStats: some View {
         HStack(spacing: 8) {
             statPill(icon: "book.closed.fill",
-                     text: "\(uniqueCount) \(uniqueCount == 1 ? "word" : "words")",
+                     text: "\(uniqueCount) \(unit)\(uniqueCount == 1 ? "" : "s")",
                      tint: Palette.indigo, deep: Palette.indigoDeep,
-                     label: "\(uniqueCount) unique words")
+                     label: "\(uniqueCount) unique \(unit)s")
             if isMastered {
                 statPill(icon: "checkmark.seal.fill", text: "Mastered",
                          tint: Palette.success, deep: Palette.successDeep,
