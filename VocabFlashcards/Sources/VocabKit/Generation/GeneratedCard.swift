@@ -99,9 +99,19 @@ public struct ModelCard: Hashable, Sendable {
         guard !front.isEmpty, !back.isEmpty else { return nil }
         let ref = field("ref")
         let section = field("section")
-        self.init(ref: ref.isEmpty ? nil : ref, front: front, back: back, tag: field("tag"),
-                  example: field("example"), exampleNote: field("exampleNote"),
+        self.init(ref: ref.isEmpty ? nil : ref, front: front, back: back,
+                  tag: Self.meaningful(field("tag"), allowingJSONPunctuation: false),
+                  example: Self.meaningful(field("example")),
+                  exampleNote: Self.meaningful(field("exampleNote")),
                   section: section.isEmpty ? nil : section)
+    }
+
+    /// The optional fields are where a struggling model leaves debris — a lone ":", or
+    /// a tag of "}, {". Anything without a letter or digit in it is treated as empty.
+    static func meaningful(_ text: String, allowingJSONPunctuation: Bool = true) -> String {
+        guard text.contains(where: { $0.isLetter || $0.isNumber }) else { return "" }
+        if !allowingJSONPunctuation, text.contains(where: { "{}[]\"".contains($0) }) { return "" }
+        return text
     }
 
     /// Card text is shown verbatim, so the Markdown emphasis models like to add would

@@ -77,6 +77,12 @@ struct CardStreamParserTests {
         #expect(parse(#"[{"front":"**osmosis**","back":"`water` moves"}]"#).first?.back == "water moves")
     }
 
+    @Test func debrisInOptionalFieldsIsDropped() {
+        let card = parse(#"[{"front":"a","back":"b","tag":"}, {","example":":","exampleNote":" - "}]"#).first
+        #expect(card == ModelCard(front: "a", back: "b"))
+        #expect(parse(#"[{"front":"a","back":"b","tag":"n.","example":"An 'a'."}]"#).first?.tag == "n.")
+    }
+
     @Test func aSingleBareObjectIsRecoveredAtTheEnd() {
         var parser = CardStreamParser()
         #expect(parser.consume(#"{"front":"a","back":"b"}"#).isEmpty)
